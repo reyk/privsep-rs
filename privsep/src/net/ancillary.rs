@@ -34,7 +34,7 @@
 //! IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 //! DEALINGS IN THE SOFTWARE.
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "macos"))]
 use std::ptr::eq;
 use std::{
     convert::TryFrom,
@@ -65,8 +65,7 @@ pub(super) fn recv_vectored_with_ancillary_from<S: AsRawFd>(
 ) -> io::Result<(usize, bool)> {
     unsafe {
         let mut msg: libc::msghdr = zeroed();
-        msg.msg_iov = bufs.as_mut_ptr().cast();
-        msg.msg_control = ancillary.buffer.as_mut_ptr().cast();
+
         cfg_if::cfg_if! {
             if #[cfg(any(target_os = "android", all(target_os = "linux", target_env = "gnu")))] {
                 msg.msg_iovlen = bufs.len() as libc::size_t;
@@ -83,6 +82,11 @@ pub(super) fn recv_vectored_with_ancillary_from<S: AsRawFd>(
                 msg.msg_iovlen = bufs.len() as libc::c_int;
                 msg.msg_controllen = ancillary.buffer.len() as libc::socklen_t;
             }
+        }
+
+        msg.msg_iov = bufs.as_mut_ptr().cast();
+        if msg.msg_controllen > 0 {
+            msg.msg_control = ancillary.buffer.as_mut_ptr().cast();
         }
 
         let count = match libc::recvmsg(socket.as_raw_fd(), &mut msg, 0) {
@@ -106,8 +110,7 @@ pub(super) fn send_vectored_with_ancillary_to<S: AsRawFd>(
 ) -> io::Result<usize> {
     unsafe {
         let mut msg: libc::msghdr = zeroed();
-        msg.msg_iov = bufs.as_ptr() as *mut _;
-        msg.msg_control = ancillary.buffer.as_mut_ptr().cast();
+
         cfg_if::cfg_if! {
             if #[cfg(any(target_os = "android", all(target_os = "linux", target_env = "gnu")))] {
                 msg.msg_iovlen = bufs.len() as libc::size_t;
@@ -124,6 +127,11 @@ pub(super) fn send_vectored_with_ancillary_to<S: AsRawFd>(
                 msg.msg_iovlen = bufs.len() as libc::c_int;
                 msg.msg_controllen = ancillary.length as libc::socklen_t;
             }
+        }
+
+        msg.msg_iov = bufs.as_ptr() as *mut _;
+        if msg.msg_controllen > 0 {
+            msg.msg_control = ancillary.buffer.as_mut_ptr().cast();
         }
 
         ancillary.truncated = false;
@@ -170,7 +178,7 @@ fn add_to_ancillary_data<T>(
         *length = new_length;
 
         let mut msg: libc::msghdr = zeroed();
-        msg.msg_control = buffer.as_mut_ptr().cast();
+
         cfg_if::cfg_if! {
             if #[cfg(any(target_os = "android", all(target_os = "linux", target_env = "gnu")))] {
                 msg.msg_controllen = *length as libc::size_t;
@@ -178,6 +186,7 @@ fn add_to_ancillary_data<T>(
                           target_os = "dragonfly",
                           target_os = "emscripten",
                           target_os = "freebsd",
+                          target_os = "macos",
                           all(target_os = "linux", target_env = "musl",),
                           target_os = "netbsd",
                           target_os = "openbsd",
@@ -185,16 +194,20 @@ fn add_to_ancillary_data<T>(
                 msg.msg_controllen = *length as libc::socklen_t;
             }
         }
+        if msg.msg_controllen > 0 {
+            msg.msg_control = buffer.as_mut_ptr().cast();
+        }
 
         let mut cmsg = libc::CMSG_FIRSTHDR(&msg);
         let mut previous_cmsg = cmsg;
         while !cmsg.is_null() {
             previous_cmsg = cmsg;
             cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
+
             cfg_if::cfg_if! {
-                // Android return the same pointer if it is the last cmsg.
+                // Android and macos return the same pointer if it is the last cmsg.
                 // Therefore, check it if the previous pointer is the same as the current one.
-                if #[cfg(target_os = "android")] {
+                if #[cfg(any(target_os = "android", target_os = "macos"))] {
                     if cmsg == previous_cmsg {
                         break;
                     }
@@ -215,6 +228,7 @@ fn add_to_ancillary_data<T>(
                           target_os = "dragonfly",
                           target_os = "emscripten",
                           target_os = "freebsd",
+                          target_os = "macos",
                           all(target_os = "linux", target_env = "musl",),
                           target_os = "netbsd",
                           target_os = "openbsd",
@@ -447,6 +461,7 @@ impl<'a> Iterator for Messages<'a> {
                               target_os = "dragonfly",
                               target_os = "emscripten",
                               target_os = "freebsd",
+                              target_os = "macos",
                               all(target_os = "linux", target_env = "musl",),
                               target_os = "netbsd",
                               target_os = "openbsd",
@@ -463,9 +478,9 @@ impl<'a> Iterator for Messages<'a> {
 
             let cmsg = cmsg.as_ref()?;
             cfg_if::cfg_if! {
-                // Android return the same pointer if it is the last cmsg.
+                // Android and macos return the same pointer if it is the last cmsg.
                 // Therefore, check it if the previous pointer is the same as the current one.
-                if #[cfg(target_os = "android")] {
+                if #[cfg(any(target_os = "android", target_os = "macos"))] {
                     if let Some(current) = self.current {
                         if eq(current, cmsg) {
                             return None;
@@ -485,7 +500,7 @@ impl<'a> Iterator for Messages<'a> {
 ///
 /// # Example
 /// ```no_run
-/// use privsep::net::{SocketAncillary, AncillaryData, UnixStreamExt};
+/// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
 /// use std::io::IoSliceMut;
 /// use std::os::unix::net::UnixStream;
 ///
@@ -564,7 +579,7 @@ impl<'a> SocketAncillary<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use privsep::net::{SocketAncillary, AncillaryData, UnixStreamExt};
+    /// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
     /// use std::io::IoSliceMut;
     /// use std::os::unix::net::UnixStream;
     ///
@@ -596,7 +611,7 @@ impl<'a> SocketAncillary<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use privsep::net::{SocketAncillary, AncillaryData, UnixStreamExt};
+    /// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
     /// use std::io::IoSlice;
     /// use std::os::unix::net::UnixStream;
     /// use std::os::unix::io::AsRawFd;
@@ -649,7 +664,7 @@ impl<'a> SocketAncillary<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use privsep::net::{SocketAncillary, AncillaryData, UnixStreamExt};
+    /// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
     /// use std::io::IoSliceMut;
     /// use std::os::unix::net::UnixStream;
     ///

@@ -1,11 +1,8 @@
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use privsep::net::stream::UnixStream;
+use privsep::{imsg, net::Fd};
 use serde_derive::{Deserialize, Serialize};
-use std::{io, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    time::interval,
-};
+use std::{io, net::TcpListener, os::unix::io::IntoRawFd, time::Duration};
+use tokio::time::interval;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Message {
@@ -15,15 +12,20 @@ struct Message {
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
-    main_channel().await?;
-    unix_channel().await
+    unix_channel().await?;
+    main_channel().await
 }
 
 async fn unix_channel() -> Result<(), std::io::Error> {
-    let (mut sender, mut receiver) = UnixStream::pair()?;
+    let (sender, receiver) = imsg::Handler::pair()?;
 
     tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(1));
+        let mut interval = interval(Duration::from_millis(1));
+
+        let fd = TcpListener::bind("127.0.0.1:1234")
+            .ok()
+            .map(|stream| stream.into_raw_fd())
+            .map(Fd::from);
 
         for id in 1..=3 {
             interval.tick().await;
@@ -32,34 +34,31 @@ async fn unix_channel() -> Result<(), std::io::Error> {
                 id,
                 name: "foo".to_string(),
             };
-            match bincode::serialize(&message) {
-                Ok(buf) => {
-                    if let Err(err) = sender.write_all(&buf).await {
-                        eprintln!("Failed to send ping: {}", err);
-                    }
-                }
-                Err(err) => eprintln!("Failed to deserialize ping: {}", err),
+
+            if let Err(err) = sender
+                .send_message(1u32.into(), fd.as_ref(), &message)
+                .await
+            {
+                eprintln!("Failed to send ping: {}", err);
             }
         }
     });
 
-    let mut buf = [0u8; 0xffff];
     loop {
-        match receiver.read(&mut buf).await {
-            Ok(0) => break,
-            Ok(n) => {
-                let message: Message = bincode::deserialize(&buf)
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-                println!("Received ping of {} bytes: {:?}", n, message)
+        match { receiver.recv_message::<Message>().await } {
+            Ok(None) => break Ok(()),
+            Ok(Some((imsg, fd, message))) => {
+                println!(
+                    "Received ping: {:?}, fd: {:?}, data: {:?}",
+                    imsg, fd, message
+                );
             }
             Err(err) => {
                 eprintln!("Failed to receive ping: {}", err);
-                return Err(err);
+                break Err(err);
             }
         }
     }
-
-    Ok(())
 }
 
 async fn main_channel() -> Result<(), std::io::Error> {

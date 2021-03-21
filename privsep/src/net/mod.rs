@@ -1,5 +1,7 @@
-pub mod ancillary;
-pub mod stream;
+mod ancillary;
+mod fd;
+mod stream;
 
 pub use ancillary::{AncillaryData, SocketAncillary};
-pub use stream::{UnixStream, UnixStreamExt};
+pub use fd::Fd;
+pub use stream::{StdUnixStreamExt, UnixStream, UnixStreamExt};

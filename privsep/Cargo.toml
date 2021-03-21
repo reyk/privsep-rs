@@ -5,6 +5,7 @@ authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 
 [dependencies]
+async-trait = "0.1.48"
 bincode = "1.3.2"
 cfg-if = "1.0.0"
 derive_more = "0.99"
@@ -12,4 +13,8 @@ futures = "0.3.13"
 libc = "0.2.90"
 serde = "1.0.124"
 serde_derive = "1.0.124"
-tokio = { version = "1.4.0", features = [ "net", "time", "rt-multi-thread", "macros", "io-util" ] }
+zerocopy = "^0.3.0" # update after const generic hit stable
+
+[dependencies.tokio]
+version = "1.4.0"
+features = [ "net", "time", "rt-multi-thread", "macros", "io-util" ]
