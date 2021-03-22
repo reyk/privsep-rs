@@ -34,15 +34,13 @@
 //! IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 //! DEALINGS IN THE SOFTWARE.
 
-#[cfg(any(target_os = "android", target_os = "macos"))]
-use std::ptr::eq;
 use std::{
     convert::TryFrom,
     io::{self, IoSlice, IoSliceMut},
     marker::PhantomData,
     mem::{size_of, zeroed},
     os::unix::io::{AsRawFd, RawFd},
-    ptr::read_unaligned,
+    ptr::{eq, read_unaligned},
     slice::from_raw_parts,
 };
 
@@ -198,20 +196,19 @@ fn add_to_ancillary_data<T>(
             msg.msg_control = buffer.as_mut_ptr().cast();
         }
 
-        let mut cmsg = libc::CMSG_FIRSTHDR(&msg);
+        let first_cmsg = libc::CMSG_FIRSTHDR(&msg);
+        let mut cmsg = first_cmsg;
         let mut previous_cmsg = cmsg;
         while !cmsg.is_null() {
             previous_cmsg = cmsg;
             cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
 
-            cfg_if::cfg_if! {
-                // Android and macos return the same pointer if it is the last cmsg.
-                // Therefore, check it if the previous pointer is the same as the current one.
-                if #[cfg(any(target_os = "android", target_os = "macos"))] {
-                    if cmsg == previous_cmsg {
-                        break;
-                    }
-                }
+            // From https://tools.ietf.org/html/rfc2292#section-4.3.2:
+            // "if the value of the cmsg pointer is NULL, a pointer to
+            // the cmsghdr structure describing the first ancillary
+            // data object is returned."
+            if eq(cmsg, first_cmsg) {
+                break;
             }
         }
 
@@ -470,23 +467,21 @@ impl<'a> Iterator for Messages<'a> {
                 }
             }
 
+            let first_cmsg = libc::CMSG_FIRSTHDR(&msg);
             let cmsg = if let Some(current) = self.current {
                 libc::CMSG_NXTHDR(&msg, current)
             } else {
-                libc::CMSG_FIRSTHDR(&msg)
+                first_cmsg
             };
 
             let cmsg = cmsg.as_ref()?;
-            cfg_if::cfg_if! {
-                // Android and macos return the same pointer if it is the last cmsg.
-                // Therefore, check it if the previous pointer is the same as the current one.
-                if #[cfg(any(target_os = "android", target_os = "macos"))] {
-                    if let Some(current) = self.current {
-                        if eq(current, cmsg) {
-                            return None;
-                        }
-                    }
-                }
+
+            // From https://tools.ietf.org/html/rfc2292#section-4.3.2:
+            // "if the value of the cmsg pointer is NULL, a pointer to
+            // the cmsghdr structure describing the first ancillary
+            // data object is returned."
+            if self.current.is_some() && eq(first_cmsg, cmsg) {
+                return None;
             }
 
             self.current = Some(cmsg);
@@ -516,7 +511,7 @@ impl<'a> Iterator for Messages<'a> {
 ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
 ///
 ///     for ancillary_result in ancillary.messages() {
-///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result.unwrap() {
+///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
 ///             for fd in scm_rights {
 ///                 println!("receive file descriptor: {}", fd);
 ///             }
@@ -681,7 +676,7 @@ impl<'a> SocketAncillary<'a> {
     ///
     ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
     ///     for ancillary_result in ancillary.messages() {
-    ///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result.unwrap() {
+    ///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
     ///             for fd in scm_rights {
     ///                 println!("receive file descriptor: {}", fd);
     ///             }
@@ -692,7 +687,7 @@ impl<'a> SocketAncillary<'a> {
     ///
     ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
     ///     for ancillary_result in ancillary.messages() {
-    ///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result.unwrap() {
+    ///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
     ///             for fd in scm_rights {
     ///                 println!("receive file descriptor: {}", fd);
     ///             }
