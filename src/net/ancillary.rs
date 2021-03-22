@@ -286,6 +286,7 @@ impl SocketCred {
     /// Create a Unix credential struct.
     ///
     /// PID, UID and GID is set to 0.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> SocketCred {
         SocketCred(libc::ucred {
             pid: 0,
@@ -388,6 +389,7 @@ impl<'a> AncillaryData<'a> {
     /// `data` must contain a valid control message and the control message must be type of
     /// `SOL_SOCKET` and level of `SCM_CREDENTIALS` or `SCM_CREDENTIALS`.
     #[cfg(any(doc, target_os = "android", target_os = "linux",))]
+    #[allow(clippy::wrong_self_convention)]
     unsafe fn as_credentials(data: &'a [u8]) -> Self {
         let ancillary_data_iter = AncillaryDataIter::new(data);
         let scm_credentials = ScmCredentials(ancillary_data_iter);
