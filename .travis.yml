@@ -6,3 +6,9 @@ rust:
   - stable
   - beta
   - nightly
+before_script:
+  - rustup component add clippy
+script:
+  - cargo test
+  - cargo ci-clippy
+  - cargo ci-fmt
