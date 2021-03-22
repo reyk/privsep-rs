@@ -98,8 +98,9 @@ impl Handler {
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
         let mut fd_result = None;
-        for ancillary_result in ancillary.messages() {
-            if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
+        for ancillary_result in ancillary.messages().flatten() {
+            #[allow(irrefutable_let_patterns)]
+            if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
                 for fd in scm_rights {
                     let fd = Fd::from(fd);
 

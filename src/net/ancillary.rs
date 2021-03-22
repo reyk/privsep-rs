@@ -512,8 +512,8 @@ impl<'a> Iterator for Messages<'a> {
 ///     let mut bufs = &mut [IoSliceMut::new(&mut buf[..])][..];
 ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
 ///
-///     for ancillary_result in ancillary.messages() {
-///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
+///     for ancillary_result in ancillary.messages().flatten() {
+///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
 ///             for fd in scm_rights {
 ///                 println!("receive file descriptor: {}", fd);
 ///             }
@@ -677,8 +677,8 @@ impl<'a> SocketAncillary<'a> {
     ///     let mut bufs = &mut [IoSliceMut::new(&mut buf[..])][..];
     ///
     ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
-    ///     for ancillary_result in ancillary.messages() {
-    ///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
+    ///     for ancillary_result in ancillary.messages().flatten() {
+    ///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
     ///             for fd in scm_rights {
     ///                 println!("receive file descriptor: {}", fd);
     ///             }
@@ -688,8 +688,8 @@ impl<'a> SocketAncillary<'a> {
     ///     ancillary.clear();
     ///
     ///     sock.recv_vectored_with_ancillary(bufs, &mut ancillary)?;
-    ///     for ancillary_result in ancillary.messages() {
-    ///         if let Ok(AncillaryData::ScmRights(scm_rights)) = ancillary_result {
+    ///     for ancillary_result in ancillary.messages().flatten() {
+    ///         if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
     ///             for fd in scm_rights {
     ///                 println!("receive file descriptor: {}", fd);
     ///             }
