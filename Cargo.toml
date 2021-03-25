@@ -21,7 +21,7 @@ derive_more = "0.99"
 libc = "0.2.90"
 serde = "1.0.124"
 serde_derive = "1.0.124"
-zerocopy = "^0.3.0" # update after const generic hit stable
+zerocopy = "0.4"
 
 [dependencies.tokio]
 version = "1.4.0"
