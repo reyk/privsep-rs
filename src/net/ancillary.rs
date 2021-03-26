@@ -196,18 +196,16 @@ fn add_to_ancillary_data<T>(
             msg.msg_control = buffer.as_mut_ptr().cast();
         }
 
-        let first_cmsg = libc::CMSG_FIRSTHDR(&msg);
-        let mut cmsg = first_cmsg;
+        let mut cmsg = libc::CMSG_FIRSTHDR(&msg);
         let mut previous_cmsg = cmsg;
         while !cmsg.is_null() {
             previous_cmsg = cmsg;
             cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
 
-            // From https://tools.ietf.org/html/rfc2292#section-4.3.2:
-            // "if the value of the cmsg pointer is NULL, a pointer to
-            // the cmsghdr structure describing the first ancillary
-            // data object is returned."
-            if eq(cmsg, first_cmsg) {
+            // Most operating systems, but not Linux or emscripten, return the previous pointer
+            // when its length is zero. Therefore, check if the previous pointer is the same as
+            // the current one.
+            if eq(cmsg, previous_cmsg) {
                 break;
             }
         }
@@ -469,21 +467,21 @@ impl<'a> Iterator for Messages<'a> {
                 }
             }
 
-            let first_cmsg = libc::CMSG_FIRSTHDR(&msg);
             let cmsg = if let Some(current) = self.current {
                 libc::CMSG_NXTHDR(&msg, current)
             } else {
-                first_cmsg
+                libc::CMSG_FIRSTHDR(&msg)
             };
 
             let cmsg = cmsg.as_ref()?;
 
-            // From https://tools.ietf.org/html/rfc2292#section-4.3.2:
-            // "if the value of the cmsg pointer is NULL, a pointer to
-            // the cmsghdr structure describing the first ancillary
-            // data object is returned."
-            if self.current.is_some() && eq(first_cmsg, cmsg) {
-                return None;
+            // Most operating systems, but not Linux or emscripten, return the previous pointer
+            // when its length is zero. Therefore, check if the previous pointer is the same as
+            // the current one.
+            if let Some(current) = self.current {
+                if eq(current, cmsg) {
+                    return None;
+                }
             }
 
             self.current = Some(cmsg);
