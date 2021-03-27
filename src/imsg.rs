@@ -2,6 +2,7 @@
 
 use crate::net::{AncillaryData, Fd, SocketAncillary, UnixStream, UnixStreamExt};
 use derive_more::{From, Into};
+use nix::unistd::getpid;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert::TryFrom,
@@ -33,6 +34,7 @@ impl Handler {
     ) -> Result<()> {
         let data = bincode::serialize(data)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        message.pid = getpid().as_raw();
         message.length = u16::try_from(data.len() + message.length as usize)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         let message_length = message.length as usize;
@@ -139,7 +141,7 @@ impl Message {
         let length = mem::size_of::<Self>() as u16;
         Message {
             id: id.into(),
-            pid: unsafe { libc::getpid() },
+            pid: getpid().as_raw(),
             length,
             ..Default::default()
         }
