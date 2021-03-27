@@ -114,7 +114,7 @@ impl Handler {
             }
         }
 
-        Ok(Some((message, None, result)))
+        Ok(Some((message, fd_result, result)))
     }
 }
 
