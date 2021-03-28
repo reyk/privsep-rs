@@ -13,3 +13,7 @@ script:
   - cargo test
   - cargo ci-clippy
   - cargo ci-fmt
+jobs:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
