@@ -1,0 +1,36 @@
+[package]
+name = "privsep"
+version = "0.0.1-test.2"
+authors = ["Reyk Floeter <contact@reykfloeter.com>"]
+edition = "2018"
+license = "ISC"
+readme = "README.md"
+description = "Privilege Separation for Rust"
+repository = "https://github.com/reyk/privsep-rs"
+categories = ["os", "os::unix-apis"]
+keywords = ["fd", "passing", "privsep", "sandbox", "imsg"]
+
+[badges]
+travis-ci = { repository = "reyk/privsep-rs", branch = "main" }
+
+[dependencies]
+arrayvec = "0.6.0"
+async-trait = "0.1.48"
+bincode = "1.3.2"
+cfg-if = "1.0.0"
+derive_more = "0.99"
+libc = "0.2.90"
+nix = "0.20.0"
+serde = "1.0.124"
+serde_derive = "1.0.124"
+zerocopy = "0.4"
+
+[dependencies.tokio]
+version = "1.4.0"
+features = [ "net", "time", "rt-multi-thread", "macros", "io-util", "signal" ]
+
+[dependencies.privsep-derive]
+path = "../privsep-derive"
+
+[[example]]
+name = "simple"

@@ -2,10 +2,17 @@ pub use privsep::{
     process::{Child, Main},
     Error,
 };
+use privsep_derive::Privsep;
+
+/// Privsep processes.
+#[derive(Debug, Privsep)]
+pub enum Privsep {
+    Child,
+}
 
 /// Privileged parent process.
 mod parent {
-    use crate::Error;
+    use crate::{Error, Privsep};
     use nix::sys::wait::{waitpid, WaitStatus};
     use privsep::{net::Fd, process::Parent};
     use std::{net::TcpListener, os::unix::io::IntoRawFd, process, time::Duration};
@@ -22,7 +29,7 @@ mod parent {
             .map(|stream| stream.into_raw_fd())
             .map(Fd::from);
 
-        parent[0]
+        parent[*Privsep::Child]
             .send_message(23u32.into(), fd.as_ref(), &())
             .await?;
 
@@ -42,11 +49,11 @@ mod parent {
                         }
                     }
                 }
-                message = parent[0].recv_message::<()>() => {
+                message = parent[*Privsep::Child].recv_message::<()>() => {
                     println!("{}: received message {:?}", parent, message);
                     if let Some((message, _, _)) = message? {
                         sleep(Duration::from_secs(1)).await;
-                        parent[0].send_message(message, fd.as_ref(), &()).await?;
+                        parent[*Privsep::Child].send_message(message, fd.as_ref(), &()).await?;
                     }
                 }
             }
@@ -95,7 +102,7 @@ mod child {
 
 /// Shared entry point.
 async fn start() -> Result<(), Error> {
-    match Main::new(["child".into()])? {
+    match Main::new(Privsep::as_array())? {
         Main::Child(child @ Child { name: "child", .. }) => child::main(child).await,
         Main::Parent(parent) => parent::main(parent).await,
         _ => Err("invalid process".into()),
