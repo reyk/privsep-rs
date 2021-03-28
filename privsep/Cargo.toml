@@ -30,6 +30,7 @@ version = "1.4.0"
 features = [ "net", "time", "rt-multi-thread", "macros", "io-util", "signal" ]
 
 [dependencies.privsep-derive]
+version = "0.0.1-test.2"
 path = "../privsep-derive"
 
 [[example]]
