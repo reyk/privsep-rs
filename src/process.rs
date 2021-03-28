@@ -45,7 +45,7 @@ impl<const N: usize> Main<N> {
         let name = env::args().next().unwrap_or_default();
 
         for process in &processes {
-            if process.name == &name {
+            if process.name == name {
                 return Ok(Child::new(process.name)?.into());
             }
         }
