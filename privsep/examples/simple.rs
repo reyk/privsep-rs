@@ -1,12 +1,14 @@
-pub use privsep::{
-    process::{Child, Main},
-    Error,
-};
+pub use privsep::{process::Child, Error};
 use privsep_derive::Privsep;
 
 /// Privsep processes.
 #[derive(Debug, Privsep)]
+#[username = "_simple"]
 pub enum Privsep {
+    /// An unprivileged child process that prints hello.
+    Hello,
+    /// A copy of the hello process.
+    #[main_path = "hello::main"]
     Child,
 }
 
@@ -24,16 +26,19 @@ mod parent {
     pub async fn main<const N: usize>(parent: Parent<N>) -> Result<(), Error> {
         println!("Hello, parent {}!", parent);
 
+        let mut sigchld = signal(SignalKind::child())?;
+
         let fd = TcpListener::bind("127.0.0.1:80")
             .ok()
             .map(|stream| stream.into_raw_fd())
             .map(Fd::from);
 
-        parent[*Privsep::Child]
-            .send_message(23u32.into(), fd.as_ref(), &())
-            .await?;
-
-        let mut sigchld = signal(SignalKind::child())?;
+        // Send a message to all children.
+        for id in Privsep::PROCESS_IDS.iter() {
+            parent[*id]
+                .send_message(23u32.into(), fd.as_ref(), &())
+                .await?;
+        }
 
         loop {
             tokio::select! {
@@ -49,11 +54,18 @@ mod parent {
                         }
                     }
                 }
-                message = parent[*Privsep::Child].recv_message::<()>() => {
+                message = parent[Privsep::CHILD_ID].recv_message::<()>() => {
                     println!("{}: received message {:?}", parent, message);
                     if let Some((message, _, _)) = message? {
                         sleep(Duration::from_secs(1)).await;
-                        parent[*Privsep::Child].send_message(message, fd.as_ref(), &()).await?;
+                        parent[Privsep::CHILD_ID].send_message(message, fd.as_ref(), &()).await?;
+                    }
+                }
+                message = parent[Privsep::HELLO_ID].recv_message::<()>() => {
+                    println!("{}: received message {:?}", parent, message);
+                    if let Some((message, _, _)) = message? {
+                        sleep(Duration::from_secs(1)).await;
+                        parent[Privsep::HELLO_ID].send_message(message, fd.as_ref(), &()).await?;
                     }
                 }
             }
@@ -62,7 +74,7 @@ mod parent {
 }
 
 /// Unprivileged child process.
-mod child {
+mod hello {
     use crate::Error;
     use privsep::process::Child;
     use std::{sync::Arc, time::Duration};
@@ -100,18 +112,9 @@ mod child {
     }
 }
 
-/// Shared entry point.
-async fn start() -> Result<(), Error> {
-    match Main::new(Privsep::as_array())? {
-        Main::Child(child @ Child { name: "child", .. }) => child::main(child).await,
-        Main::Parent(parent) => parent::main(parent).await,
-        _ => Err("invalid process".into()),
-    }
-}
-
 #[tokio::main]
 async fn main() {
-    if let Err(err) = start().await {
+    if let Err(err) = Privsep::main().await {
         eprintln!("Error: {}", err);
     }
 }

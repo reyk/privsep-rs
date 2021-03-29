@@ -14,6 +14,8 @@ pub enum Error {
     Error(&'static str),
     #[display(fmt = "{}", "_0")]
     InvalidArgument(num::ParseIntError),
+    #[display(fmt = "Invalid process")]
+    InvalidProcess,
     #[display(fmt = "{}", "_0")]
     VarError(env::VarError),
     #[display(fmt = "{}", "_0")]

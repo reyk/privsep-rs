@@ -6,6 +6,7 @@ use nix::{
     unistd::{execve, fork, getpid, getuid, ForkResult, Pid},
 };
 use std::{
+    borrow::Cow,
     env,
     ffi::CString,
     os::unix::{
@@ -15,7 +16,39 @@ use std::{
     path::Path,
 };
 
+/// Internal env variable that is passed between processes.
 pub const PRIVSEP_FD: &str = "PRIVSEP_FD";
+
+/// This should typically be overwritten by the service implementing it.
+pub const PRIVSEP_USERNAME: &str = "nobody";
+
+/// General options for the privsep setup
+#[derive(Debug)]
+pub struct Options {
+    /// This stop requiring root and disables privdrop.
+    pub disable_privdrop: bool,
+    /// The default privdrop username, if enabled.
+    pub username: Username,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            disable_privdrop: false,
+            username: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Deref, Display, From)]
+#[from(forward)]
+pub struct Username(Cow<'static, str>);
+
+impl Default for Username {
+    fn default() -> Self {
+        PRIVSEP_USERNAME.into()
+    }
+}
 
 #[derive(Debug, From)]
 pub struct Process {
@@ -33,27 +66,6 @@ pub struct ChildProcess {
 
 pub type Children<const N: usize> = ArrayVec<ChildProcess, N>;
 
-#[derive(Debug, From)]
-pub enum Main<const N: usize> {
-    Parent(Parent<N>),
-    Child(Child),
-}
-
-impl<const N: usize> Main<N> {
-    // TODO: split new and change run
-    pub fn new(processes: Processes<N>) -> Result<Self, Error> {
-        let name = env::args().next().unwrap_or_default();
-
-        for process in &processes {
-            if process.name == name {
-                return Ok(Child::new(process.name)?.into());
-            }
-        }
-
-        Parent::new(processes).map(Into::into)
-    }
-}
-
 #[derive(Debug, Display, Deref)]
 #[display(fmt = "parent({})", "pid")]
 pub struct Parent<const N: usize> {
@@ -64,8 +76,8 @@ pub struct Parent<const N: usize> {
 }
 
 impl<const N: usize> Parent<N> {
-    pub fn new(processes: Processes<N>) -> Result<Parent<N>, Error> {
-        if !getuid().is_root() {
+    pub async fn new(processes: Processes<N>, options: &Options) -> Result<Parent<N>, Error> {
+        if !options.disable_privdrop && !getuid().is_root() {
             return Err(Error::PermissionDenied);
         }
 
@@ -112,8 +124,10 @@ pub struct Child {
 }
 
 impl Child {
-    pub fn new(name: &'static str) -> Result<Self, Error> {
+    pub async fn new(name: &'static str, _options: &Options) -> Result<Self, Error> {
         let fd: RawFd = env::var(PRIVSEP_FD)?.parse()?;
+        env::remove_var(PRIVSEP_FD);
+
         let parent = Handler::from_raw_fd(fd)?;
 
         Ok(Self {
