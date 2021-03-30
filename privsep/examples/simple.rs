@@ -3,7 +3,7 @@ use privsep_derive::Privsep;
 
 /// Privsep processes.
 #[derive(Debug, Privsep)]
-#[username = "_simple"]
+#[username = "nobody"]
 pub enum Privsep {
     /// An unprivileged child process that prints hello.
     Hello,

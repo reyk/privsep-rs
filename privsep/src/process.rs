@@ -4,7 +4,7 @@ use close_fds::close_open_fds;
 use derive_more::{Deref, Display, From};
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag},
-    unistd::{dup2, execv, fork, getpid, getuid, ForkResult, Pid},
+    unistd::{self, chdir, chroot, dup2, execv, fork, getpid, getuid, ForkResult, Pid, User},
 };
 use std::{
     borrow::Cow,
@@ -56,7 +56,7 @@ pub struct Parent<const N: usize> {
 
 impl<const N: usize> Parent<N> {
     pub async fn new(processes: Processes<N>, options: &Options) -> Result<Parent<N>, Error> {
-        if !options.disable_privdrop && !getuid().is_root() {
+        if options.disable_privdrop && !getuid().is_root() {
             return Err(Error::PermissionDenied);
         }
 
@@ -114,17 +114,42 @@ pub struct Child {
 }
 
 impl Child {
-    pub async fn new(name: &'static str, _options: &Options) -> Result<Self, Error> {
+    pub async fn new(name: &'static str, options: &Options) -> Result<Self, Error> {
         set_cloexec(PRIVSEP_FD, true)?;
         let parent = Handler::from_raw_fd(PRIVSEP_FD)?;
 
-        // TODO: drop privileges. From C:
-        // - get user name (libc::getpwnam)
-        // - chroot
-        // - chdir /
-        // - set groups
-        // - set group id (setresgid or whatever is available on the OS)
-        // - set user id (setresuid or whatever is available on the OS)
+        if !options.disable_privdrop {
+            // Get the privdrop user.
+            let user = User::from_name(&options.username)?
+                .ok_or_else(|| Error::UserNotFound(options.username.clone()))?;
+
+            // chroot and change the working directory.
+            chroot(&user.dir).map_err(|err| Error::Privdrop("chroot", err.into()))?;
+            chdir("/").map_err(|err| Error::Privdrop("chdir", err.into()))?;
+
+            // Set the supplementary groups.
+            #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "redox")))]
+            unistd::setgroups(&[user.gid])
+                .map_err(|err| Error::Privdrop("setgroups", err.into()))?;
+
+            // Drop the privileges.
+            cfg_if::cfg_if! {
+                if #[cfg(any(target_os = "android", target_os = "freebsd",
+                             target_os = "linux", target_os = "openbsd"))] {
+                    unistd::setresgid(user.gid, user.gid, user.gid)
+                        .map_err(|err| Error::Privdrop("setresgid", err.into()))?;
+                    unistd::setresuid(user.uid, user.uid, user.uid)
+                        .map_err(|err| Error::Privdrop("setresuid", err.into()))?;
+                } else {
+                    unistd::setegid(user.gid).map_err(|err| Error::Privdrop("setegid", err.into()))?;
+                    unistd::setgid(user.gid).map_err(|err| Error::Privdrop("setgid", err.into()))?;
+                    // seteuid before setuid fails on macOS (and AIX...)
+                    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+                    unistd::seteuid(user.uid).map_err(|err| Error::Privdrop("seteuid", err.into()))?;
+                    unistd::setuid(user.uid).map_err(|err| Error::Privdrop("setuid", err.into()))?;
+                }
+            }
+        }
 
         Ok(Self {
             name,
