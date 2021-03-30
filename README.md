@@ -1,7 +1,7 @@
 # Privilege Separation for Rust
 
 [![docs.rs](https://docs.rs/privsep/badge.svg)](https://docs.rs/privsep)
-[![Build Status](https://travis-ci.org/reyk/privsep-rs.svg?branch=main)](https://travis-ci.org/reyk/privsep-rs)
+[![Build Status](https://github.com/reyk/privsep-rs/actions/workflows/build.yml/badge.svg)](https://github.com/reyk/privsep-rs/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/license-ISC-blue.svg)](https://raw.githubusercontent.com/reyk/privsep-rs/main/LICENSE)
 
 This crate is **experimental** and **WIP**.
