@@ -1,9 +1,10 @@
 use crate::{error::Error, imsg::Handler};
 use arrayvec::ArrayVec;
+use close_fds::close_open_fds;
 use derive_more::{Deref, Display, From};
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag},
-    unistd::{execve, fork, getpid, getuid, ForkResult, Pid},
+    unistd::{dup2, execv, fork, getpid, getuid, ForkResult, Pid},
 };
 use std::{
     borrow::Cow,
@@ -16,38 +17,16 @@ use std::{
     path::Path,
 };
 
-/// Internal env variable that is passed between processes.
-pub const PRIVSEP_FD: &str = "PRIVSEP_FD";
-
-/// This should typically be overwritten by the service implementing it.
-pub const PRIVSEP_USERNAME: &str = "nobody";
+/// Internal file descriptor that is passed between processes.
+pub const PRIVSEP_FD: RawFd = 3;
 
 /// General options for the privsep setup
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Options {
     /// This stop requiring root and disables privdrop.
     pub disable_privdrop: bool,
     /// The default privdrop username, if enabled.
-    pub username: Username,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            disable_privdrop: false,
-            username: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Deref, Display, From)]
-#[from(forward)]
-pub struct Username(Cow<'static, str>);
-
-impl Default for Username {
-    fn default() -> Self {
-        PRIVSEP_USERNAME.into()
-    }
+    pub username: Cow<'static, str>,
 }
 
 #[derive(Debug, From)]
@@ -90,15 +69,26 @@ impl<const N: usize> Parent<N> {
             let pid = match unsafe { fork() }? {
                 ForkResult::Parent { child, .. } => child,
                 ForkResult::Child => {
-                    let fd = remote.as_raw_fd();
-                    disable_cloexec(fd)?;
-
                     let name = path_to_cstr(&program);
-                    execve(
-                        &name,
-                        &[&CString::new(proc.name).unwrap()],
-                        &[&CString::new(format!("{}={}", PRIVSEP_FD, fd.to_string())).unwrap()],
-                    )?;
+
+                    let fd = dup2(remote.as_raw_fd(), PRIVSEP_FD).unwrap();
+                    set_cloexec(fd, false)?;
+
+                    // TODO: open /dev/null and dup2 stdin/stdout/stderr.
+
+                    // TODO: we could eventually implement `closefrom`
+                    // ourselves based on OpenSSH's `bsd-closefrom.c`.
+                    //
+                    // Rust sets most file descriptors to
+                    // close-on-exec but we make sure that any
+                    // additional file descriptors are closed.  This
+                    // is using the `close_fds` crate because a
+                    // BSD-like `closefrom` is not part of `nix`.
+                    unsafe {
+                        close_open_fds(PRIVSEP_FD + 1, &[]);
+                    }
+
+                    execv(&name, &[&CString::new(proc.name).unwrap()])?;
                     return Err(Error::PermissionDenied);
                 }
             };
@@ -125,10 +115,16 @@ pub struct Child {
 
 impl Child {
     pub async fn new(name: &'static str, _options: &Options) -> Result<Self, Error> {
-        let fd: RawFd = env::var(PRIVSEP_FD)?.parse()?;
-        env::remove_var(PRIVSEP_FD);
+        set_cloexec(PRIVSEP_FD, true)?;
+        let parent = Handler::from_raw_fd(PRIVSEP_FD)?;
 
-        let parent = Handler::from_raw_fd(fd)?;
+        // TODO: drop privileges. From C:
+        // - get user name (libc::getpwnam)
+        // - chroot
+        // - chdir /
+        // - set groups
+        // - set group id (setresgid or whatever is available on the OS)
+        // - set user id (setresuid or whatever is available on the OS)
 
         Ok(Self {
             name,
@@ -138,9 +134,9 @@ impl Child {
     }
 }
 
-fn disable_cloexec(fd: RawFd) -> Result<(), Error> {
+fn set_cloexec(fd: RawFd, add: bool) -> Result<(), Error> {
     let mut flags = FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD)?);
-    flags.remove(FdFlag::FD_CLOEXEC);
+    flags.set(FdFlag::FD_CLOEXEC, add);
     fcntl(fd, FcntlArg::F_SETFD(flags))?;
     Ok(())
 }

@@ -17,24 +17,6 @@ pub fn derive_privsep(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .into()
 }
 
-fn parse_attribute_type<T: Parse + ToTokens>(
-    attrs: &[Attribute],
-    name: &str,
-    default: &str,
-) -> Result<T, Error> {
-    if let Some(attr) = attrs.iter().find(|attr| attr.path.is_ident(name)) {
-        match attr.parse_meta()? {
-            Meta::NameValue(MetaNameValue {
-                lit: Lit::Str(lit_str),
-                ..
-            }) => lit_str.parse(),
-            meta => Err(Error::new_spanned(meta, "invalid attribute")),
-        }
-    } else {
-        LitStr::new(default, Span::call_site()).parse()
-    }
-}
-
 fn parse_attribute_value(attrs: &[Attribute], name: &str) -> Result<Option<LitStr>, Error> {
     if let Some(attr) = attrs.iter().find(|attr| attr.path.is_ident(name)) {
         match attr.parse_meta()? {
@@ -42,11 +24,24 @@ fn parse_attribute_value(attrs: &[Attribute], name: &str) -> Result<Option<LitSt
                 lit: Lit::Str(lit_str),
                 ..
             }) => Ok(Some(lit_str)),
-            meta => Err(Error::new_spanned(meta, "invalid attribute")),
+            meta => Err(Error::new_spanned(
+                meta,
+                &format!("invalid `{}` attribute", name),
+            )),
         }
     } else {
         Ok(None)
     }
+}
+
+fn parse_attribute_type<T: Parse + ToTokens>(
+    attrs: &[Attribute],
+    name: &str,
+    default: &str,
+) -> Result<T, Error> {
+    parse_attribute_value(attrs, name)?
+        .unwrap_or_else(|| LitStr::new(default, Span::call_site()))
+        .parse()
 }
 
 fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
@@ -63,6 +58,16 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     let main_path: Path = parse_attribute_type(&attrs, "main_path", "parent::main")?;
 
     let disable_privdrop = attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
+    let username = if let Some(username) = parse_attribute_value(&attrs, "username")? {
+        username
+    } else if disable_privdrop {
+        LitStr::new("", Span::call_site())
+    } else {
+        return Err(Error::new(
+            Span::call_site(),
+            "`Privsep` requires `username` attribute",
+        ));
+    };
     let options = quote! {
         privsep::process::Options {
             disable_privdrop: #disable_privdrop,
@@ -81,17 +86,13 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             parse_attribute_type(&variant.attrs, "main_path", &(name_snake + "::main"))?;
 
         let child_username =
-            if let Some(username) = parse_attribute_value(&variant.attrs, "username")? {
-                quote! { #username.into() }
-            } else {
-                quote! { Default::default() }
-            };
+            parse_attribute_value(&variant.attrs, "username")?.unwrap_or_else(|| username.clone());
         let child_disable_privdrop =
             disable_privdrop || attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
         let child_options = quote! {
             privsep::process::Options {
                 disable_privdrop: #child_disable_privdrop,
-                username: #child_username,
+                username: #child_username.into(),
                 ..Default::default()
             }
         };
