@@ -1,3 +1,5 @@
+//! `UnixStream` extensions to support file descriptor passing.
+
 use crate::net::ancillary::{
     recv_vectored_with_ancillary_from, send_vectored_with_ancillary_to, SocketAncillary,
 };

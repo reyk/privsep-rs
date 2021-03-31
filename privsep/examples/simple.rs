@@ -1,3 +1,5 @@
+//! Simple example of a privileged service.
+
 pub use privsep::{process::Child, Error};
 use privsep_derive::Privsep;
 
@@ -23,6 +25,7 @@ mod parent {
         time::sleep,
     };
 
+    // main entrypoint of the parent process
     pub async fn main<const N: usize>(parent: Parent<N>) -> Result<(), Error> {
         println!("Hello, parent {}!", parent);
 
@@ -80,6 +83,7 @@ mod hello {
     use std::{sync::Arc, time::Duration};
     use tokio::time::{interval, sleep};
 
+    // main entrypoint to the child processes
     pub async fn main(child: Child) -> Result<(), Error> {
         let child = Arc::new(child);
 

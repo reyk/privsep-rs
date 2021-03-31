@@ -1,4 +1,4 @@
-//! Internal messages ("imsg") protocol between privilege-separated processes.
+//! Internal message handling between privilege-separated processes.
 
 use crate::net::{AncillaryData, Fd, SocketAncillary, UnixStream, UnixStreamExt};
 use derive_more::{From, Into};
@@ -12,20 +12,25 @@ use std::{
 };
 use zerocopy::{AsBytes, FromBytes};
 
+/// `imsg` handler.
 #[derive(Debug, From, Into)]
 pub struct Handler {
+    /// Async half of a UNIX socketpair.
     socket: UnixStream,
 }
 
 impl Handler {
+    /// Create new handler pair.
     pub fn pair() -> Result<(Self, Self)> {
         UnixStream::pair().map(|(a, b)| (a.into(), b.into()))
     }
 
+    /// Create half of a handler pair from a file descriptor.
     pub fn from_raw_fd<T: IntoRawFd>(fd: T) -> Result<Handler> {
         unsafe { UnixStream::from_raw_fd(fd.into_raw_fd()).map(Into::into) }
     }
 
+    /// Send message to the remote end.
     pub async fn send_message<T: Serialize>(
         &self,
         mut message: Message,
@@ -68,6 +73,7 @@ impl Handler {
         Ok(())
     }
 
+    /// Receive message from the remote end.
     pub async fn recv_message<T: DeserializeOwned>(
         &self,
     ) -> Result<Option<(Message, Option<Fd>, T)>> {
@@ -126,17 +132,24 @@ impl AsRawFd for Handler {
     }
 }
 
+/// Internal message header.
 #[derive(Debug, AsBytes, FromBytes, Default)]
 #[repr(C)]
 pub struct Message {
+    /// Request type.
     pub id: u32,
+    /// Total message length (header + payload)
     pub length: u16,
+    /// Optional flags
     pub flags: u16,
+    /// Optional peer ID
     pub peer_id: u32,
+    /// Local PID
     pub pid: libc::pid_t,
 }
 
 impl Message {
+    /// Create new message header
     pub fn new<T: Into<u32>>(id: T) -> Self {
         let length = mem::size_of::<Self>() as u16;
         Message {

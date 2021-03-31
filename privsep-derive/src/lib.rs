@@ -1,4 +1,6 @@
-//! Helper macros for `privep-rs`
+//! Helper macros for the [`privsep`] create.
+//!
+//! [`privsep`]: http://docs.rs/privsep/
 
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
@@ -8,6 +10,12 @@ use syn::{
     Path,
 };
 
+/// Derive privsep processes from an enum.
+///
+/// Attributes:
+/// - `main_path`: Set the path of the parent or process `main` function.
+/// - `username`: Set the default or the per-process privdrop user.
+/// - `disable_privdrop`: disable privdrop for the program or process.
 #[proc_macro_derive(Privsep, attributes(main_path, username, disable_privdrop))]
 pub fn derive_privsep(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as ItemEnum);
