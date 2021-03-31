@@ -1,7 +1,9 @@
+//! Error definitions
+
 use derive_more::{Display, From};
 use std::{borrow::Cow, env, io, num};
 
-/// Common errors.
+/// Common errors of the `privsep` crate.
 #[derive(Debug, Display, From)]
 pub enum Error {
     #[display(fmt = "I/O error: {}", "_0")]

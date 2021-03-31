@@ -1,3 +1,5 @@
+//! Networking for `imsg` handling and file descriptor passing.
+
 mod ancillary;
 mod fd;
 mod stream;

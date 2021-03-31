@@ -15,8 +15,7 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
-          command: fmt
-          args: --all -- --check
+          command: ci-fmt
   clippy:
     name: cargo clippy
     runs-on: ubuntu-latest
@@ -29,8 +28,7 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
-          command: clippy
-          args: --workspace --all-features -- -Dwarnings -Drust-2018-idioms
+          command: ci-clippy
   test:
     name: cargo test
     runs-on: ${{ matrix.os }}

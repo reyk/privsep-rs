@@ -1,3 +1,5 @@
+//! Configuration and setup of privilege-separated processes.
+
 use crate::{error::Error, imsg::Handler};
 use arrayvec::ArrayVec;
 use close_fds::close_open_fds;
@@ -20,7 +22,7 @@ use std::{
 /// Internal file descriptor that is passed between processes.
 pub const PRIVSEP_FD: RawFd = 3;
 
-/// General options for the privsep setup
+/// General options for the privsep setup.
 #[derive(Debug, Default)]
 pub struct Options {
     /// This stop requiring root and disables privdrop.
@@ -29,32 +31,44 @@ pub struct Options {
     pub username: Cow<'static, str>,
 }
 
+/// Child process startup definition.
 #[derive(Debug, From)]
 pub struct Process {
+    /// The process name.
     pub name: &'static str,
 }
 
+/// The list of child process definitions.
 pub type Processes<const N: usize> = [Process; N];
 
+/// A child process from the parent point of view.
 #[derive(Debug, Deref)]
 pub struct ChildProcess {
+    /// IPC channel to the child process.
     #[deref]
     pub handler: Handler,
+    /// Process PID.
     pub pid: Pid,
 }
 
+/// The list of child processes.
 pub type Children<const N: usize> = ArrayVec<ChildProcess, N>;
 
+/// The privileged parent.
 #[derive(Debug, Display, Deref)]
 #[display(fmt = "parent({})", "pid")]
 pub struct Parent<const N: usize> {
+    /// Process PID.
     pub pid: Pid,
+    /// Child process definitions.
     pub processes: Processes<N>,
+    /// Child processes.
     #[deref]
     pub children: Children<N>,
 }
 
 impl<const N: usize> Parent<N> {
+    /// Creates a new parent and forks the children.
     pub async fn new(processes: Processes<N>, options: &Options) -> Result<Parent<N>, Error> {
         if options.disable_privdrop && !getuid().is_root() {
             return Err(Error::PermissionDenied);
@@ -104,16 +118,21 @@ impl<const N: usize> Parent<N> {
     }
 }
 
+/// A child process.
 #[derive(Debug, Deref, Display)]
 #[display(fmt = "{}({})", "name, pid")]
 pub struct Child {
+    /// Process name.
     pub name: &'static str,
+    /// Process PID.
     pub pid: Pid,
+    /// Process' parenr handler.
     #[deref]
     pub parent: Handler,
 }
 
 impl Child {
+    /// Creates a new child and drops privileges.
     pub async fn new(name: &'static str, options: &Options) -> Result<Self, Error> {
         set_cloexec(PRIVSEP_FD, true)?;
         let parent = Handler::from_raw_fd(PRIVSEP_FD)?;

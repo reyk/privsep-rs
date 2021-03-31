@@ -1,3 +1,5 @@
+//! Owned, droppable file descriptors.
+
 use derive_more::{From, Into};
 use std::{
     io::{self, Result},
