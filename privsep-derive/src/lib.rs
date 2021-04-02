@@ -60,6 +60,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     let mut const_as_array = vec![];
     let mut const_id = vec![];
     let mut const_ids = vec![];
+    let mut const_names = vec![];
     let mut from_id = vec![];
 
     let doc = attrs.iter().filter(|a| a.path.is_ident("doc"));
@@ -118,6 +119,10 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             #id,
         });
 
+        const_names.push(quote! {
+            #name,
+        });
+
         as_ref_str.push(quote! {
             Self::#ident => #name,
         });
@@ -142,6 +147,9 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
 
             #[doc = "IDs of all child processes."]
             pub const PROCESS_IDS: [usize; #array_len] = [#(#const_ids)*];
+
+            #[doc = "Names of all child processes."]
+            pub const PROCESS_NAMES: [&'static str; #array_len] = [#(#const_names)*];
 
             #[doc = "Return processes as const list."]
             pub const fn as_array() -> [privsep::process::Process; #array_len] {

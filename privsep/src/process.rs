@@ -3,10 +3,10 @@
 use crate::{error::Error, imsg::Handler};
 use arrayvec::ArrayVec;
 use close_fds::close_open_fds;
-use derive_more::{Deref, Display, From};
+use derive_more::{AsRef, Deref, Display, From};
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag},
-    unistd::{self, chdir, chroot, dup2, execv, fork, getpid, getuid, ForkResult, Pid, User},
+    unistd::{self, chdir, chroot, dup2, execve, fork, getpid, getuid, ForkResult, Pid, User},
 };
 use std::{
     borrow::Cow,
@@ -32,9 +32,10 @@ pub struct Options {
 }
 
 /// Child process startup definition.
-#[derive(Debug, From)]
+#[derive(AsRef, Debug, From)]
 pub struct Process {
     /// The process name.
+    #[as_ref]
     pub name: &'static str,
 }
 
@@ -83,8 +84,6 @@ impl<const N: usize> Parent<N> {
             let pid = match unsafe { fork() }? {
                 ForkResult::Parent { child, .. } => child,
                 ForkResult::Child => {
-                    let name = path_to_cstr(&program);
-
                     let fd = dup2(remote.as_raw_fd(), PRIVSEP_FD).unwrap();
                     set_cloexec(fd, false)?;
 
@@ -102,7 +101,16 @@ impl<const N: usize> Parent<N> {
                         close_open_fds(PRIVSEP_FD + 1, &[]);
                     }
 
-                    execv(&name, &[&CString::new(proc.name).unwrap()])?;
+                    let name = path_to_cstr(&program);
+                    let args = [&CString::new(proc.name).unwrap()];
+                    let env = [&CString::new(format!(
+                        "RUST_LOG={}",
+                        env::var("RUST_LOG").unwrap_or_default()
+                    ))
+                    .unwrap()];
+
+                    execve(&name, &args, &env)?;
+
                     return Err(Error::PermissionDenied);
                 }
             };
@@ -143,7 +151,12 @@ impl Child {
                 .ok_or_else(|| Error::UserNotFound(options.username.clone()))?;
 
             // chroot and change the working directory.
-            chroot(&user.dir).map_err(|err| Error::Privdrop("chroot", err.into()))?;
+            let dir = if user.dir.is_dir() {
+                user.dir.as_path()
+            } else {
+                Path::new("/var/empty")
+            };
+            chroot(dir).map_err(|err| Error::Privdrop("chroot", err.into()))?;
             chdir("/").map_err(|err| Error::Privdrop("chdir", err.into()))?;
 
             // Set the supplementary groups.

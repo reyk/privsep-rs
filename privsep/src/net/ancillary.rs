@@ -495,6 +495,7 @@ impl<'a> Iterator for Messages<'a> {
 ///
 /// # Example
 /// ```no_run
+/// # #![allow(irrefutable_let_patterns)]
 /// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
 /// use std::io::IoSliceMut;
 /// use std::os::unix::net::UnixStream;
@@ -659,6 +660,7 @@ impl<'a> SocketAncillary<'a> {
     /// # Example
     ///
     /// ```no_run
+    /// # #![allow(irrefutable_let_patterns)]
     /// use privsep::net::{SocketAncillary, AncillaryData, StdUnixStreamExt};
     /// use std::io::IoSliceMut;
     /// use std::os::unix::net::UnixStream;

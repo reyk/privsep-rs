@@ -2,6 +2,7 @@
 
 pub use privsep::{process::Child, Error};
 use privsep_derive::Privsep;
+use std::env;
 
 /// Privsep processes.
 #[derive(Debug, Privsep)]
@@ -19,6 +20,7 @@ mod parent {
     use crate::{Error, Privsep};
     use nix::sys::wait::{waitpid, WaitStatus};
     use privsep::{net::Fd, process::Parent};
+    use privsep_log::{info, warn};
     use std::{net::TcpListener, os::unix::io::IntoRawFd, process, time::Duration};
     use tokio::{
         signal::unix::{signal, SignalKind},
@@ -27,7 +29,9 @@ mod parent {
 
     // main entrypoint of the parent process
     pub async fn main<const N: usize>(parent: Parent<N>) -> Result<(), Error> {
-        println!("Hello, parent {}!", parent);
+        let _guard = privsep_log::init(&parent.to_string(), true).unwrap();
+
+        info!("Hello, parent!");
 
         let mut sigchld = signal(SignalKind::child())?;
 
@@ -48,24 +52,30 @@ mod parent {
                 _ = sigchld.recv() => {
                     match waitpid(None, None) {
                         Ok(WaitStatus::Exited(pid, status)) => {
-                            println!("Child {} exited with status {}", pid, status);
+                            warn!("Child {} exited with status {}", pid, status);
                             process::exit(0);
                         }
                         status => {
-                            println!("Child exited with error: {:?}", status);
+                            warn!("Child exited with error: {:?}", status);
                             process::exit(1);
                         }
                     }
                 }
                 message = parent[Privsep::CHILD_ID].recv_message::<()>() => {
-                    println!("{}: received message {:?}", parent, message);
+                    info!(
+                        "received message {:?}", message;
+                        "source" => Privsep::Child.as_ref(),
+                    );
                     if let Some((message, _, _)) = message? {
                         sleep(Duration::from_secs(1)).await;
                         parent[Privsep::CHILD_ID].send_message(message, fd.as_ref(), &()).await?;
                     }
                 }
                 message = parent[Privsep::HELLO_ID].recv_message::<()>() => {
-                    println!("{}: received message {:?}", parent, message);
+                    info!(
+                        "received message {:?}", message;
+                        "source" => Privsep::Hello.as_ref(),
+                    );
                     if let Some((message, _, _)) = message? {
                         sleep(Duration::from_secs(1)).await;
                         parent[Privsep::HELLO_ID].send_message(message, fd.as_ref(), &()).await?;
@@ -80,14 +90,17 @@ mod parent {
 mod hello {
     use crate::Error;
     use privsep::process::Child;
+    use privsep_log::{debug, info, warn};
     use std::{sync::Arc, time::Duration};
     use tokio::time::{interval, sleep};
 
     // main entrypoint to the child processes
     pub async fn main(child: Child) -> Result<(), Error> {
+        let _guard = privsep_log::init(&child.to_string(), true).unwrap();
+
         let child = Arc::new(child);
 
-        println!("Hello, child {}!", child);
+        info!("Hello, child {}!", child);
 
         // Run parent handler as background task
         tokio::spawn({
@@ -95,11 +108,11 @@ mod hello {
             async move {
                 loop {
                     if let Ok(message) = child.recv_message::<()>().await {
-                        println!("{}: received message {:?}", child, message);
+                        info!("received message {:?}", message);
                         if let Some((message, _, _)) = message {
                             sleep(Duration::from_secs(1)).await;
                             if let Err(err) = child.send_message(message, None, &()).await {
-                                eprintln!("failed to send message: {}", err);
+                                warn!("failed to send message: {}", err);
                             }
                         }
                     }
@@ -111,13 +124,18 @@ mod hello {
         let mut interval = interval(Duration::from_secs(3));
         loop {
             interval.tick().await;
-            println!("{}: tick", child);
+            debug!("tick");
         }
     }
 }
 
 #[tokio::main]
 async fn main() {
+    env::set_var(
+        "RUST_LOG",
+        env::var("RUST_LOG").unwrap_or("debug".to_string()),
+    );
+
     if let Err(err) = Privsep::main().await {
         eprintln!("Error: {}", err);
     }

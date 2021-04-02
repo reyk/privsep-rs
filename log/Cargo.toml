@@ -1,0 +1,20 @@
+[package]
+name = "privsep-log"
+version = "0.0.1-test.1"
+authors = ["Reyk Floeter <contact@reykfloeter.com>"]
+edition = "2018"
+license = "ISC"
+description = "Simple async logging crate inspired by OpenBSD's `log.c`"
+repository = "https://github.com/reyk/privsep-rs"
+categories = ["os", "os::unix-apis"]
+keywords = ["slog", "log", "async", "privsep"]
+
+[dependencies]
+derive_more = "0.99"
+libc = "0.2.92"
+log = "0.4.14"
+slog = "2.7.0"
+slog-async = "2.6.0"
+slog-envlogger = "2.2.0"
+slog-scope = "4.4.0"
+slog-stdlog = "4.1.0"
