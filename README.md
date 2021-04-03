@@ -26,8 +26,8 @@ Many things, including:
   - Write an actual reference implementation.
 - `log`:
   - Replace `slog-envlogger` with a custom implementation: it pulls in
-    `slog-async` with all the undesired dependencies.  Submit a PR to
-    `slog-envlogger` for a minimal feature otherwise.
+    `slog-async` with all the undesired dependencies.  Or wait if the
+    PR gets merged: https://github.com/slog-rs/envlogger/pull/9
 
 ## Copyright and license
 
