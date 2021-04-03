@@ -26,6 +26,8 @@ pub enum Error {
     UserNotFound(Cow<'static, str>),
     #[display(fmt = "Failed to drop privileges ({}) - {}", "_0", "_1")]
     Privdrop(&'static str, Box<dyn std::error::Error>),
+    #[display(fmt = "General error: {}", "_0")]
+    GeneralError(Box<dyn std::error::Error>),
 }
 
 impl std::error::Error for Error {}

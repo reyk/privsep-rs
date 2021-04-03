@@ -13,8 +13,13 @@ keywords = ["slog", "log", "async", "privsep"]
 derive_more = "0.99"
 libc = "0.2.92"
 log = "0.4.14"
+serde = "1.0.124"
+serde_derive = "1.0.124"
 slog = "2.7.0"
-slog-async = "2.6.0"
 slog-envlogger = "2.2.0"
 slog-scope = "4.4.0"
 slog-stdlog = "4.1.0"
+tokio = { version = "1.4.0", features = [ "sync" ] }
+
+[dev-dependencies]
+tokio = { version = "1.4.0", features = [ "sync", "rt-multi-thread", "macros", "time" ] }

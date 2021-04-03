@@ -29,7 +29,9 @@ mod parent {
 
     // main entrypoint of the parent process
     pub async fn main<const N: usize>(parent: Parent<N>) -> Result<(), Error> {
-        let _guard = privsep_log::init(&parent.to_string(), true).unwrap();
+        let _guard = privsep_log::async_logger(&parent.to_string(), true)
+            .await
+            .map_err(|err| Error::GeneralError(Box::new(err)))?;
 
         info!("Hello, parent!");
 
@@ -96,7 +98,9 @@ mod hello {
 
     // main entrypoint to the child processes
     pub async fn main(child: Child) -> Result<(), Error> {
-        let _guard = privsep_log::init(&child.to_string(), true).unwrap();
+        let _guard = privsep_log::async_logger(&child.to_string(), true)
+            .await
+            .map_err(|err| Error::GeneralError(Box::new(err)))?;
 
         let child = Arc::new(child);
 

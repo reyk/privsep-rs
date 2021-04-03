@@ -24,6 +24,10 @@ Many things, including:
   - Help to get `ancillary` into stable, add suppport for nightly..
 - `sample`:
   - Write an actual reference implementation.
+- `log`:
+  - Replace `slog-envlogger` with a custom implementation: it pulls in
+    `slog-async` with all the undesired dependencies.  Submit a PR to
+    `slog-envlogger` for a minimal feature otherwise.
 
 ## Copyright and license
 
