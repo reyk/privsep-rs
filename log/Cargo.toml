@@ -11,6 +11,7 @@ keywords = ["slog", "log", "async", "privsep"]
 
 [dependencies]
 derive_more = "0.99"
+lazy_static = "1.4.0"
 libc = "0.2.92"
 log = "0.4.14"
 serde = "1.0.124"
@@ -22,8 +23,7 @@ tokio = { version = "1.4.0", features = [ "sync" ] }
 
 [dependencies.slog-envlogger]
 version = "2.2.0"
-git = "https://github.com/reyk/envlogger"
-branch = "feature/init"
+git = "https://github.com/slog-rs/envlogger"
 default-features = false
 
 [dev-dependencies]

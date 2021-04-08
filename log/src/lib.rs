@@ -3,9 +3,11 @@
 use derive_more::{Display, From, Into};
 use libc::openlog;
 use serde_derive::{Deserialize, Serialize};
-use slog::{Drain, Level, OwnedKVList, Record, KV};
+use slog::{Drain, Level, Logger, OwnedKVList, Record, KV};
+use slog_envlogger::LogBuilder;
 use slog_scope::GlobalLoggerGuard;
 use std::{
+    env,
     ffi::{CStr, CString},
     fmt,
     io::{self, Write},
@@ -21,12 +23,41 @@ pub use slog_scope::{debug, error, info, trace, warn};
 
 static LOG_BRIDGE: Once = Once::new();
 
+lazy_static::lazy_static! {
+    /// Default logger global guard.
+    ///
+    /// This is used before a logger context is initialized.
+    pub static ref GLOBAL_LOGGER_GUARD: (Logger, GlobalLoggerGuard) = {
+        let guard = new(
+            Box::new(Stderr::new("").unwrap().fuse()),
+            Config {
+                foreground: true,
+                level: Some("debug".to_string()),
+            }
+        );
+        guard
+    };
+
+    /// Default global logger scope.
+    static ref GLOBAL_LOGGER: Logger = GLOBAL_LOGGER_GUARD.0.clone();
+}
+
 /// Configuration for the logging crate.
-#[derive(Debug, Default, Deserialize, Serialize, From)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     /// Log to the foreground or to syslog (default: syslog).
-    #[from(forward)]
     foreground: bool,
+    level: Option<String>,
+}
+
+impl From<bool> for Config {
+    #[inline]
+    fn from(foreground: bool) -> Self {
+        Self {
+            foreground,
+            ..Default::default()
+        }
+    }
 }
 
 /// Logging errors.
@@ -42,34 +73,47 @@ pub enum Error {
 
 impl std::error::Error for Error {}
 
-fn init(
+/// Initialize the global logger context.
+///
+/// This also called by `sync_logger` and `async_logger`.
+pub fn init() {
+    lazy_static::initialize(&GLOBAL_LOGGER);
+    LOG_BRIDGE.call_once(|| {
+        if let Err(err) = slog_stdlog::init() {
+            error!("Failed to initialize log bridge: {}", err);
+        }
+    });
+}
+
+fn new(
     drain: Box<dyn Drain<Err = slog::Never, Ok = ()> + Send>,
-    _config: Config,
-) -> GlobalLoggerGuard {
+    config: Config,
+) -> (Logger, GlobalLoggerGuard) {
     let kv = slog::o!();
 
-    // TODO: apply config overwrites
-    let drain = slog_envlogger::new(drain);
+    // Build log filter
+    let mut builder = LogBuilder::new(drain);
+    let log = env::var("RUST_LOG")
+        .ok()
+        .or(config.level)
+        .unwrap_or_else(|| "info".to_string());
+    builder = builder.parse(&log);
+    let drain = builder.build();
 
     // This is required to make the drain `UnwindSafe`.
     let drain = Mutex::new(drain.fuse());
 
     let logger = slog::Logger::root(drain.fuse(), kv).into_erased();
+    let guard = slog_scope::set_global_logger(logger.clone());
 
-    let guard = slog_scope::set_global_logger(logger);
-    LOG_BRIDGE.call_once(|| {
-        slog_stdlog::init().unwrap();
-    });
-
-    guard
+    (logger, guard)
 }
 
 /// Return a new global async logger.
-pub async fn async_logger<C: Into<Config>>(
-    name: &str,
-    config: C,
-) -> Result<GlobalLoggerGuard, Error> {
+pub async fn async_logger<C: Into<Config>>(name: &str, config: C) -> Result<LoggerGuard, Error> {
     let config = config.into();
+
+    init();
 
     let drain = if config.foreground {
         Async::new(Box::new(Stderr::new(name)?)).await
@@ -77,20 +121,36 @@ pub async fn async_logger<C: Into<Config>>(
         Async::new(Box::new(Syslog::new(name)?)).await
     };
 
-    Ok(init(Box::new(drain.fuse()), config))
+    Ok(new(Box::new(drain.fuse()), config).into())
 }
 
 /// Return a new global async logger.
-pub fn sync_logger<C: Into<Config>>(name: &str, config: C) -> Result<GlobalLoggerGuard, Error> {
+pub fn sync_logger<C: Into<Config>>(name: &str, config: C) -> Result<LoggerGuard, Error> {
     let config = config.into();
 
+    init();
+
     let guard = if config.foreground {
-        init(Box::new(Stderr::new(name)?.fuse()), config)
+        new(Box::new(Stderr::new(name)?.fuse()), config)
     } else {
-        init(Box::new(Syslog::new(name)?.fuse()), config)
+        new(Box::new(Syslog::new(name)?.fuse()), config)
     };
 
-    Ok(guard)
+    Ok(guard.into())
+}
+
+/// Wrapper for the global logger guard.
+#[derive(From)]
+pub struct LoggerGuard {
+    _logger: Logger,
+    _guard: GlobalLoggerGuard,
+}
+
+impl Drop for LoggerGuard {
+    fn drop(&mut self) {
+        let guard = slog_scope::set_global_logger(GLOBAL_LOGGER.clone());
+        guard.cancel_reset();
+    }
 }
 
 /// Local trait that can be used by the async logger.
@@ -116,7 +176,11 @@ impl Target for Stderr {
 
     /// Log the pre-formatted string.
     fn log_str(&self, message: &str) -> Result<(), Error> {
-        let message = format!("{}: {}\n", self.name, message);
+        let message = if !self.name.is_empty() {
+            format!("{}: {}\n", self.name, message)
+        } else {
+            format!("{}\n", message)
+        };
         io::stderr()
             .write_all(message.as_bytes())
             .map_err(Into::into)
@@ -238,8 +302,6 @@ impl Drain for Async {
 impl Drop for Async {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            self.sender.send(Message::Close).unwrap();
-
             let waiter = thread::spawn(|| {
                 if let Ok(runtime) = Runtime::new() {
                     runtime.block_on(async move {
@@ -247,6 +309,9 @@ impl Drop for Async {
                     });
                 }
             });
+
+            self.sender.send(Message::Close).unwrap();
+
             waiter.join().expect("async logger");
         }
     }
@@ -321,13 +386,27 @@ impl slog::Serializer for Formatter {
 
 #[cfg(test)]
 mod tests {
-    use crate::{async_logger, debug, info};
+    use crate::{async_logger, debug, info, init, Config};
+
+    #[test]
+    fn test_default_log() {
+        init();
+        info!("default log");
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_log_stderr() {
-        let _guard = async_logger("test", true).await.unwrap();
+        let _guard = async_logger(
+            "test",
+            Config {
+                foreground: true,
+                level: Some("debug".to_string()),
+            },
+        )
+        .await
+        .unwrap();
 
-        for i in 1..=1000 {
+        for i in 1..=100 {
             info!("Hello, World! {}", i);
             debug!("Hello, World! {}", i);
         }
