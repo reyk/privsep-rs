@@ -28,14 +28,13 @@ lazy_static::lazy_static! {
     ///
     /// This is used before a logger context is initialized.
     pub static ref GLOBAL_LOGGER_GUARD: (Logger, GlobalLoggerGuard) = {
-        let guard = new(
+        new(
             Box::new(Stderr::new("").unwrap().fuse()),
             Config {
                 foreground: true,
                 level: Some("debug".to_string()),
             }
-        );
-        guard
+        )
     };
 
     /// Default global logger scope.
