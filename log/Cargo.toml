@@ -4,6 +4,7 @@ version = "0.0.1-test.1"
 authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 license = "ISC"
+readme = "README.md"
 description = "Simple async logging crate inspired by OpenBSD's `log.c`"
 repository = "https://github.com/reyk/privsep-rs"
 categories = ["os", "os::unix-apis"]
