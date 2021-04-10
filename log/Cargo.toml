@@ -22,10 +22,5 @@ slog-scope = "4.4.0"
 slog-stdlog = "4.1.0"
 tokio = { version = "1.4.0", features = [ "sync" ] }
 
-[dependencies.slog-envlogger]
-version = "2.2.0"
-git = "https://github.com/slog-rs/envlogger"
-default-features = false
-
 [dev-dependencies]
 tokio = { version = "1.4.0", features = [ "sync", "rt-multi-thread", "macros", "time" ] }

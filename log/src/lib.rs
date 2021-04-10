@@ -4,10 +4,8 @@ use derive_more::{Display, From, Into};
 use libc::openlog;
 use serde_derive::{Deserialize, Serialize};
 use slog::{Drain, Level, Logger, OwnedKVList, Record, KV};
-use slog_envlogger::LogBuilder;
 use slog_scope::GlobalLoggerGuard;
 use std::{
-    env,
     ffi::{CStr, CString},
     fmt,
     io::{self, Write},
@@ -17,6 +15,8 @@ use std::{
     time::Duration,
 };
 use tokio::{runtime::Runtime, sync::mpsc, time};
+
+mod envlogger;
 
 /// Re-export the scoped logging macros.
 pub use slog_scope::{debug, error, info, trace, warn};
@@ -32,7 +32,7 @@ lazy_static::lazy_static! {
             Box::new(Stderr::new("").unwrap().fuse()),
             Config {
                 foreground: true,
-                level: Some("debug".to_string()),
+                filter: Some("debug".to_string()),
             }
         )
     };
@@ -46,7 +46,7 @@ lazy_static::lazy_static! {
 pub struct Config {
     /// Log to the foreground or to syslog (default: syslog).
     foreground: bool,
-    level: Option<String>,
+    filter: Option<String>,
 }
 
 impl From<bool> for Config {
@@ -91,13 +91,8 @@ fn new(
     let kv = slog::o!();
 
     // Build log filter
-    let mut builder = LogBuilder::new(drain);
-    let log = env::var("RUST_LOG")
-        .ok()
-        .or(config.level)
-        .unwrap_or_else(|| "info".to_string());
-    builder = builder.parse(&log);
-    let drain = builder.build();
+    let drain =
+        envlogger::Logger::with_default_filter(drain, config.filter.as_deref().unwrap_or("info"));
 
     // This is required to make the drain `UnwindSafe`.
     let drain = Mutex::new(drain.fuse());
@@ -399,7 +394,7 @@ mod tests {
             "test",
             Config {
                 foreground: true,
-                level: Some("debug".to_string()),
+                filter: Some("debug".to_string()),
             },
         )
         .await
