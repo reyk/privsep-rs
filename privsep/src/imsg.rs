@@ -138,18 +138,18 @@ impl AsRawFd for Handler {
 pub struct Message {
     /// Request type.
     pub id: u32,
-    /// Total message length (header + payload)
+    /// Total message length (header + payload).
     pub length: u16,
-    /// Optional flags
+    /// Optional flags.
     pub flags: u16,
-    /// Optional peer ID
+    /// Optional peer ID.
     pub peer_id: u32,
-    /// Local PID
+    /// Local PID.
     pub pid: libc::pid_t,
 }
 
 impl Message {
-    /// Create new message header
+    /// Create new message header.
     pub fn new<T: Into<u32>>(id: T) -> Self {
         let length = mem::size_of::<Self>() as u16;
         Message {

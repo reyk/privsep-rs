@@ -6,7 +6,7 @@
 //! multiple isolated processes that only communicate via a strict and
 //! well-defined internal messaging IPC with each other.  Unlike
 //! containers or micro services, they still belong to one closely
-//! coupled program on the same host.
+//! coupled program.
 //!
 //! In the implementation of the `privsep` crate, a privileged parent
 //! process forks and executes the unprivileged child processes.

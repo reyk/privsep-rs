@@ -7,6 +7,10 @@
 
 This crate is **experimental** and **WIP**.
 
+## Minimum Rust version
+
+This crate uses const generics and requires Rust 1.51 or later.
+
 ## TODO
 
 Many things, including:
@@ -15,19 +19,16 @@ Many things, including:
 - `net` / `imsg`:
   - Fix reading writing of partial messages (async loop until done).
 - `process`:
-  - Handle stdin/stdout and add logging.
   - Setup child to child channels.
   - Allow to spawn multiple processes of a same child (not really needed with tokio).
   - Improve naming of structs.
   - Add support for OS-specific sandboxing (e.g. OpenBSD pledge)
   - Add support for running privileged operations in a child before privdrop.
-  - Help to get `ancillary` into stable, add suppport for nightly..
-- `sample`:
-  - Write an actual reference implementation.
+  - [Help to get `ancillary` into stable](https://github.com/rust-lang/rust/pull/83374).
+  - Add suppport for nightly.
 - `log`:
-  - Replace `slog-envlogger` with a custom implementation: it pulls in
-    `slog-async` with all the undesired dependencies.  Or wait if the
-    PR gets merged: https://github.com/slog-rs/envlogger/pull/9
+  - Improve async logging and lazy initialization of log messages.
+- Write more tests to improve code coverage.
 
 ## Copyright and license
 

@@ -1,4 +1,58 @@
-//! Simple async logging crate inspired by OpenBSD's `log.c`
+//! Simple async logging crate inspired by OpenBSD's `log.c`.
+//!
+//! # Examples
+//!
+//! The logger is typically started from the programs's main function:
+//!
+//! ```
+//! # use privsep_log::info;
+//! let _guard = privsep_log::sync_logger("test", true).unwrap();
+//!
+//! info!("Started");
+//! ```
+//!
+//! The async logger is provided to run inside of a [`tokio`] runtime.
+//!
+//! ```
+//! use privsep_log::info;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let _guard = privsep_log::async_logger("test", true).await.unwrap();
+//!
+//!     info!("Started");
+//! }
+//! ```
+//!
+//! The `sync_logger` and `async_logger` functions take two arguments:
+//! the name of the program and the options, an arbitrary variable
+//! that implements `Into<Config>`. A simple boolean can be passed to
+//! indicate if logging should happen in foreground via standard error
+//! output or in the background via syslog; this is identical to
+//! passing the `Config` struct with the `foreground` option:
+//!
+//! ```
+//! # use privsep_log::{Config, debug, info};
+//! // Lazily initialize the default logger.
+//! privsep_log::init();
+//!
+//! // Parse configuration or command-line options...
+//! let args = std::env::args().collect::<Vec<_>>();
+//!
+//! debug!("Reading configuration...");
+//! let config = Config {
+//!     foreground: false,
+//!     ..Default::default()
+//! };
+//! let name = &args[0];
+//!
+//! // Now start the background logger.
+//! let _guard = privsep_log::sync_logger(name, config).unwrap();
+//!
+//! info!("Started");
+//! ```
+//!
+//! [`tokio`]: https://tokio.rs
 
 use derive_more::{Display, From, Into};
 use libc::openlog;
@@ -18,7 +72,6 @@ use tokio::{runtime::Runtime, sync::mpsc, time};
 
 mod envlogger;
 
-/// Re-export the scoped logging macros.
 pub use slog_scope::{debug, error, info, trace, warn};
 
 static LOG_BRIDGE: Once = Once::new();
@@ -27,7 +80,7 @@ lazy_static::lazy_static! {
     /// Default logger global guard.
     ///
     /// This is used before a logger context is initialized.
-    pub static ref GLOBAL_LOGGER_GUARD: (Logger, GlobalLoggerGuard) = {
+    static ref GLOBAL_LOGGER_GUARD: (Logger, GlobalLoggerGuard) = {
         new(
             Box::new(Stderr::new("").unwrap().fuse()),
             Config {
@@ -45,8 +98,9 @@ lazy_static::lazy_static! {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     /// Log to the foreground or to syslog (default: syslog).
-    foreground: bool,
-    filter: Option<String>,
+    pub foreground: bool,
+    /// Log filter (can be overridden by the `RUST_LOG` environment variable).
+    pub filter: Option<String>,
 }
 
 impl From<bool> for Config {
@@ -67,7 +121,7 @@ pub enum Error {
     #[display(fmt = "{}", "_0")]
     IoError(io::Error),
     #[display(fmt = "{}", "_0")]
-    SendError(mpsc::error::SendError<Message>),
+    SendError(String),
 }
 
 impl std::error::Error for Error {}
@@ -104,11 +158,15 @@ fn new(
 }
 
 /// Return a new global async logger.
-pub async fn async_logger<C: Into<Config>>(name: &str, config: C) -> Result<LoggerGuard, Error> {
+pub async fn async_logger<N: AsRef<str>, C: Into<Config>>(
+    name: N,
+    config: C,
+) -> Result<LoggerGuard, Error> {
     let config = config.into();
 
     init();
 
+    let name = name.as_ref();
     let drain = if config.foreground {
         Async::new(Box::new(Stderr::new(name)?)).await
     } else {
@@ -118,12 +176,16 @@ pub async fn async_logger<C: Into<Config>>(name: &str, config: C) -> Result<Logg
     Ok(new(Box::new(drain.fuse()), config).into())
 }
 
-/// Return a new global async logger.
-pub fn sync_logger<C: Into<Config>>(name: &str, config: C) -> Result<LoggerGuard, Error> {
+/// Return a new global sync logger.
+pub fn sync_logger<N: AsRef<str>, C: Into<Config>>(
+    name: N,
+    config: C,
+) -> Result<LoggerGuard, Error> {
     let config = config.into();
 
     init();
 
+    let name = name.as_ref();
     let guard = if config.foreground {
         new(Box::new(Stderr::new(name)?.fuse()), config)
     } else {
@@ -155,7 +217,7 @@ pub trait Target: Send + Sync {
     fn log_str(&self, name: &str) -> Result<(), Error>;
 }
 
-/// Forground logger that logs to stderr.
+/// Forground logger drain that logs to stderr.
 pub struct Stderr {
     name: String,
 }
@@ -191,7 +253,7 @@ impl Drain for Stderr {
     }
 }
 
-/// Background logger to log to syslog.
+/// Background logger drain to log to syslog.
 // TODO: use the reentrant version
 pub struct Syslog {
     /// We need to keep a reference to the const char * around.
@@ -258,7 +320,7 @@ impl Drain for Syslog {
     }
 }
 
-/// Async channel that sends log messages to a background task.
+/// Async logger drain that sends log messages to a background task.
 pub struct Async {
     sender: mpsc::UnboundedSender<Message>,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -289,7 +351,7 @@ impl Drain for Async {
         let message = format_log(record, values);
         self.sender
             .send(Message::Entry(record.level(), message))
-            .map_err(Into::into)
+            .map_err(|err| Error::SendError(err.to_string()))
     }
 }
 
@@ -312,12 +374,12 @@ impl Drop for Async {
 }
 
 #[derive(Debug, Clone)]
-pub enum Message {
+enum Message {
     Entry(Level, String),
     Close,
 }
 
-pub struct AsyncLogger {
+struct AsyncLogger {
     receiver: mpsc::UnboundedReceiver<Message>,
     target: Box<dyn Target>,
 }

@@ -6,7 +6,7 @@ use std::{
     os::unix::io::{AsRawFd, IntoRawFd, RawFd},
 };
 
-/// Wrapper for `RawFd` that drops file descriptor when dropped.
+/// Wrapper for `RawFd` that closes the file descriptor when dropped.
 #[derive(Debug, From, Into)]
 pub struct Fd(RawFd);
 
