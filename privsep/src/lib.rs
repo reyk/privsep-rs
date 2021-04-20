@@ -27,9 +27,9 @@
 //! following example:
 //!
 //! ```ignore
-//! mod filter;
 //! mod health;
 //! mod parent;
+//! mod redirect;
 //! mod relay;
 //!
 //! use privsep_derive::Privsep;
@@ -38,10 +38,10 @@
 //! #[derive(Debug, Privsep)]
 //! #[username = "_relayd"]
 //! pub enum Privsep {
-//!     /// Packet Filter Engine
-//!     Filter,
 //!     /// Health Check Engine
 //!     Health,
+//!     /// Packet Filter Engine
+//!     Redirect,
 //!     /// L7 Relays
 //!     Relay,
 //! }
