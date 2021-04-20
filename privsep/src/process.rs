@@ -71,7 +71,7 @@ pub struct Parent<const N: usize> {
 impl<const N: usize> Parent<N> {
     /// Creates a new parent and forks the children.
     pub async fn new(processes: Processes<N>, options: &Options) -> Result<Parent<N>, Error> {
-        if options.disable_privdrop && !getuid().is_root() {
+        if !options.disable_privdrop && !getuid().is_root() {
             return Err(Error::PermissionDenied);
         }
 
@@ -117,6 +117,8 @@ impl<const N: usize> Parent<N> {
 
             children.push(ChildProcess { handler, pid })
         }
+
+        assert_eq!(children.len(), N, "child processes");
 
         Ok(Self {
             pid: getpid(),
