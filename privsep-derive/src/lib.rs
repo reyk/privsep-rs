@@ -5,18 +5,20 @@
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
+use std::collections::{HashMap, HashSet};
 use syn::{
-    parse::Parse, parse_macro_input, Attribute, Error, ItemEnum, Lit, LitStr, Meta, MetaNameValue,
-    Path,
+    parse::Parse, parse_macro_input, Attribute, Error, ItemEnum, Lit, LitStr, Meta, MetaList,
+    MetaNameValue, NestedMeta, Path,
 };
 
 /// Derive privsep processes from an enum.
 ///
 /// Attributes:
+/// - `connect`: Connect child with the specified peer.
 /// - `main_path`: Set the path of the parent or process `main` function.
 /// - `username`: Set the default or the per-process privdrop user.
 /// - `disable_privdrop`: disable privdrop for the program or process.
-#[proc_macro_derive(Privsep, attributes(main_path, username, disable_privdrop))]
+#[proc_macro_derive(Privsep, attributes(connect, main_path, username, disable_privdrop))]
 pub fn derive_privsep(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as ItemEnum);
 
@@ -42,6 +44,33 @@ fn parse_attribute_value(attrs: &[Attribute], name: &str) -> Result<Option<LitSt
     }
 }
 
+fn parse_attribute_ident(attrs: &[Attribute], name: &str) -> Result<Vec<Ident>, Error> {
+    let mut result = vec![];
+
+    // TODO: could we use `darling` here?
+    if let Some(attr) = attrs.iter().find(|attr| attr.path.is_ident(name)) {
+        match attr.parse_meta()? {
+            Meta::List(MetaList { nested, .. }) => {
+                for nested in nested.iter() {
+                    if let NestedMeta::Meta(Meta::Path(path)) = nested {
+                        if let Some(ident) = path.get_ident() {
+                            result.push(ident.clone());
+                        }
+                    }
+                }
+            }
+            ref meta => {
+                return Err(Error::new_spanned(
+                    meta,
+                    &format!("invalid `{}` attribute", name),
+                ))
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 fn parse_attribute_type<T: Parse + ToTokens>(
     attrs: &[Attribute],
     name: &str,
@@ -57,15 +86,19 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     let attrs = &item.attrs;
     let mut as_ref_str = vec![];
     let mut child_main = vec![];
+    let mut child_peers = vec![];
     let mut const_as_array = vec![];
     let mut const_id = vec![];
     let mut const_ids = vec![];
     let mut const_names = vec![];
     let mut child_names = vec![];
     let mut from_id = vec![];
+    let mut children = vec![];
+    let mut connect_map = HashMap::new();
+    let not_connected = HashSet::new();
+    let array_len = item.variants.len();
 
-    let doc = attrs.iter().filter(|a| a.path.is_ident("doc"));
-
+    // Get the global attributes.
     let disable_privdrop = attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
     let username = if let Some(username) = parse_attribute_value(&attrs, "username")? {
         username
@@ -77,15 +110,58 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             "`Privsep` requires `username` attribute",
         ));
     };
+    let doc = attrs
+        .iter()
+        .filter(|a| a.path.is_ident("doc"))
+        .collect::<Vec<_>>();
 
+    // Resolve bi-directional connections between processes.
+    for variant in item.variants.iter() {
+        let child_ident = variant.ident.clone();
+        children.push(child_ident.clone());
+
+        let connect = parse_attribute_ident(&variant.attrs, "connect")?
+            .into_iter()
+            .collect::<HashSet<_>>();
+        connect_map.insert(child_ident, connect);
+    }
+
+    let temp_map = connect_map.clone();
+    for (key, value) in temp_map.into_iter() {
+        for entry in value.iter() {
+            if !children.contains(&entry) {
+                return Err(Error::new_spanned(
+                    item,
+                    &format!("Connection to unknown process `{}`", entry),
+                ));
+            }
+            if let Some(other) = connect_map.get_mut(entry) {
+                other.insert(key.clone());
+            }
+        }
+    }
+
+    let mut main_path = quote! {
+        unimplemented!()
+    };
+    let mut options = quote! {
+        Default::default()
+    };
+
+    // Configure processes.
     for (id, variant) in item.variants.iter().enumerate() {
-        let child_doc = variant.attrs.iter().filter(|a| a.path.is_ident("doc"));
-        let ident = &variant.ident;
-        let name = ident.to_string().to_case(Case::Kebab);
-        let name_snake = ident.to_string().to_case(Case::Snake);
-        let name_upper = ident.to_string().to_case(Case::UpperSnake);
+        let child_doc = variant
+            .attrs
+            .iter()
+            .filter(|a| a.path.is_ident("doc"))
+            .collect::<Vec<_>>();
+        let child_ident = &variant.ident;
+        let name_ident = child_ident.to_string();
+        let name = name_ident.to_case(Case::Kebab);
+        let name_snake = name_ident.to_case(Case::Snake);
+        let name_upper = name_ident.to_case(Case::UpperSnake);
         let id_name = Ident::new(&(name_upper + "_ID"), Span::call_site());
-        let main_path: Path =
+        let child_main_path: Path =
             parse_attribute_type(&variant.attrs, "main_path", &(name_snake + "::main"))?;
 
         let child_username =
@@ -101,8 +177,26 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
         };
         child_names.push(name.clone());
 
+        let connect = connect_map.get(&child_ident).unwrap_or(&not_connected);
+
+        let child_connect = children
+            .iter()
+            .enumerate()
+            .map(|(id, child)| {
+                let is_connected = id == 0 || connect.contains(&child);
+                quote! {
+                    Process {
+                        name: Self::as_static_str(&Self::#child),
+                        connect: #is_connected
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let is_child = id != 0;
+
         const_as_array.push(quote! {
-            Process { name: #name },
+            Process { name: #name, connect: #is_child },
         });
 
         const_id.push(quote! {
@@ -119,32 +213,34 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
         });
 
         as_ref_str.push(quote! {
-            Self::#ident => #name,
+            Self::#child_ident => #name,
         });
 
         from_id.push(quote! {
-            #id => Ok(Self::#ident),
+            #id => Ok(Self::#child_ident),
         });
 
-        let process;
-        let match_name;
+        child_peers.push(quote! {
+            [#(#child_connect)*],
+        });
 
-        if id == 0 {
-            process = quote! { Parent::new(Self::as_array(), &#child_options).await? };
-            match_name = quote! { _ };
+        if is_child {
+            let process = quote! {
+                Child::<#array_len>::new([#(#child_connect)*], #name, &#child_options).await?
+            };
+            child_main.push(quote! {
+                #name => {
+                    let process = #process;
+                    #child_main_path(process).await
+                }
+            });
         } else {
-            process = quote! { Child::new(#name, &#child_options).await? };
-            match_name = quote! { #name };
+            options = child_options;
+            main_path = quote! {
+                #child_main_path
+            };
         }
-
-        child_main.push(quote! {
-            #match_name => {
-                let process = #process;
-                #main_path(process).await
-            }
-        });
     }
-    let array_len = const_as_array.len();
     let child_main = child_main.into_iter().rev().collect::<Vec<_>>();
 
     if child_names.first().map(AsRef::as_ref) != Some("parent") {
@@ -175,19 +271,27 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
 
             #[doc = "Start parent or child process."]
             pub async fn main() -> Result<(), privsep::Error> {
-                use privsep::process::{Child, Parent};
+                use privsep::process::{Child, Parent, Process};
                 let name = std::env::args().next().unwrap_or_default();
                 match name.as_ref() {
                     #(#child_main)*
+                    _ => {
+                        let process = Parent::new(Self::as_array(), &#options).await?;
+                        #main_path(process.connect([#(#child_peers)*]).await?).await
+                    }
+                }
+            }
+
+            pub const fn as_static_str(&self) -> &'static str {
+                match self {
+                    #(#as_ref_str)*
                 }
             }
         }
 
         impl AsRef<str> for #ident {
             fn as_ref(&self) -> &str {
-                match self {
-                    #(#as_ref_str)*
-                }
+                self.as_static_str()
             }
         }
 

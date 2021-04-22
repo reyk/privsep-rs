@@ -1,8 +1,10 @@
 //! Owned, droppable file descriptors.
 
 use derive_more::{From, Into};
+use nix::fcntl::{fcntl, FcntlArg};
 use std::{
     io::{self, Result},
+    mem,
     os::unix::io::{AsRawFd, IntoRawFd, RawFd},
 };
 
@@ -18,6 +20,13 @@ impl Fd {
             fd => Ok(fd.into()),
         }
     }
+
+    /// Check if the file descriptor is valid,
+    pub fn is_open(&self) -> Result<()> {
+        fcntl(self.0, FcntlArg::F_GETFD)
+            .map(|_| ())
+            .map_err(|err| io::Error::new(io::ErrorKind::NotConnected, err))
+    }
 }
 
 impl Drop for Fd {
@@ -28,7 +37,9 @@ impl Drop for Fd {
 
 impl IntoRawFd for Fd {
     fn into_raw_fd(self) -> RawFd {
-        self.0
+        let fd = self.0;
+        mem::forget(self);
+        fd
     }
 }
 

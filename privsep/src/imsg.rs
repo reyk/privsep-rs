@@ -25,13 +25,35 @@ impl Handler {
         UnixStream::pair().map(|(a, b)| (a.into(), b.into()))
     }
 
+    pub fn socketpair() -> Result<(Fd, Fd)> {
+        let (a, b) = Self::pair()?;
+        let fd_a = Fd::from(a.as_raw_fd());
+        let fd_b = Fd::from(b.as_raw_fd());
+        mem::forget(a);
+        mem::forget(b);
+        Ok((fd_a, fd_b))
+    }
+
     /// Create half of a handler pair from a file descriptor.
     pub fn from_raw_fd<T: IntoRawFd>(fd: T) -> Result<Handler> {
         unsafe { UnixStream::from_raw_fd(fd.into_raw_fd()).map(Into::into) }
     }
 
-    /// Send message to the remote end.
+    /// Send message to remote end.
     pub async fn send_message<T: Serialize>(
+        &self,
+        message: Message,
+        fd: Option<&Fd>,
+        data: &T,
+    ) -> Result<()> {
+        if message.id <= Message::RESERVED {
+            return Err(io::Error::new(io::ErrorKind::Other, "Reserved message ID"));
+        }
+        self.send_message_internal(message, fd, data).await
+    }
+
+    /// Send message to the remote end.
+    pub(crate) async fn send_message_internal<T: Serialize>(
         &self,
         mut message: Message,
         fd: Option<&Fd>,
@@ -149,6 +171,9 @@ pub struct Message {
 }
 
 impl Message {
+    // Reserved IDs
+    const RESERVED: u32 = 10;
+
     /// Create new message header.
     pub fn new<T: Into<u32>>(id: T) -> Self {
         let length = mem::size_of::<Self>() as u16;
@@ -157,6 +182,13 @@ impl Message {
             pid: getpid().as_raw(),
             length,
             ..Default::default()
+        }
+    }
+
+    pub fn connect(peer_id: usize) -> Self {
+        Self {
+            peer_id: peer_id as u32,
+            ..Self::new(1u32)
         }
     }
 }

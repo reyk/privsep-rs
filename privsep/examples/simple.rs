@@ -14,6 +14,7 @@ pub enum Privsep {
     Hello,
     /// A copy of the hello process.
     #[main_path = "hello::main"]
+    #[connect(Hello)]
     Child,
 }
 
@@ -71,40 +72,48 @@ mod parent {
                     }
                 }
                 message = parent[Privsep::CHILD_ID].recv_message::<()>() => {
-                    info!(
-                        "received message {:?}", message;
-                        "source" => Privsep::Child.as_ref(),
-                    );
-                    if let Some((message, _, _)) = message? {
-                        sleep(Duration::from_secs(1)).await;
-                        parent[Privsep::CHILD_ID].send_message(message, fd.as_ref(), &()).await?;
+                    match message? {
+                        None => break,
+                        Some((message, _, _)) => {
+                            info!(
+                                "received message {:?}", message;
+                                "source" => Privsep::Hello.as_ref(),
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                            parent[Privsep::CHILD_ID].send_message(message, fd.as_ref(), &()).await?;
+                        }
                     }
                 }
                 message = parent[Privsep::HELLO_ID].recv_message::<()>() => {
-                    info!(
-                        "received message {:?}", message;
-                        "source" => Privsep::Hello.as_ref(),
-                    );
-                    if let Some((message, _, _)) = message? {
-                        sleep(Duration::from_secs(1)).await;
-                        parent[Privsep::HELLO_ID].send_message(message, fd.as_ref(), &()).await?;
+                    match message? {
+                        None => break,
+                        Some((message, _, _)) => {
+                            info!(
+                                "received message {:?}", message;
+                                "source" => Privsep::Hello.as_ref(),
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                            parent[Privsep::HELLO_ID].send_message(message, fd.as_ref(), &()).await?;
+                        }
                     }
                 }
             }
         }
+
+        Ok(())
     }
 }
 
 /// Unprivileged child process.
 mod hello {
-    use crate::Error;
+    use crate::{Error, Privsep};
     use privsep::process::Child;
     use privsep_log::{debug, info, warn};
     use std::{sync::Arc, time::Duration};
     use tokio::time::{interval, sleep};
 
     // main entrypoint to the child processes
-    pub async fn main(child: Child) -> Result<(), Error> {
+    pub async fn main<const N: usize>(child: Child<N>) -> Result<(), Error> {
         let _guard = privsep_log::async_logger(&child.to_string(), true)
             .await
             .map_err(|err| Error::GeneralError(Box::new(err)))?;
@@ -118,11 +127,14 @@ mod hello {
             let child = child.clone();
             async move {
                 loop {
-                    if let Ok(message) = child.recv_message::<()>().await {
+                    if let Ok(message) = child[Privsep::PARENT_ID].recv_message::<()>().await {
                         info!("received message {:?}", message);
                         if let Some((message, _, _)) = message {
                             sleep(Duration::from_secs(1)).await;
-                            if let Err(err) = child.send_message(message, None, &()).await {
+                            if let Err(err) = child[Privsep::PARENT_ID]
+                                .send_message(message, None, &())
+                                .await
+                            {
                                 warn!("failed to send message: {}", err);
                             }
                         }

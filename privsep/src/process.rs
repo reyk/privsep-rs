@@ -1,15 +1,19 @@
 //! Configuration and setup of privilege-separated processes.
 
-use crate::{error::Error, imsg::Handler};
+use crate::{
+    error::Error,
+    imsg::{Handler, Message},
+};
 use arrayvec::ArrayVec;
 use close_fds::close_open_fds;
 use derive_more::{AsRef, Deref, Display, From};
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag},
-    unistd::{self, chdir, chroot, dup2, execve, fork, getpid, getuid, ForkResult, Pid, User},
+    unistd::{self, chdir, chroot, dup2, execve, fork, getuid, ForkResult, Pid, User},
 };
 use std::{
     borrow::Cow,
+    collections::HashSet,
     env,
     ffi::CString,
     ops,
@@ -42,18 +46,33 @@ pub struct Process {
     /// The process name.
     #[as_ref]
     pub name: &'static str,
+    /// Connect this process.
+    pub connect: bool,
 }
 
 /// The list of child process definitions.
 pub type Processes<const N: usize> = [Process; N];
 
 /// A child process from the parent point of view.
-#[derive(Debug)]
+#[derive(Debug, AsRef)]
 pub struct Peer {
+    /// The process name.
+    #[as_ref]
+    pub name: &'static str,
     /// IPC channel to the child process.
     pub handler: Option<Handler>,
     /// Process PID.
     pub pid: Pid,
+}
+
+impl Default for Peer {
+    fn default() -> Self {
+        Self {
+            name: "",
+            handler: None,
+            pid: Pid::parent(),
+        }
+    }
 }
 
 impl ops::Deref for Peer {
@@ -76,8 +95,6 @@ pub type Peers<const N: usize> = ArrayVec<Peer, N>;
 pub struct Parent<const N: usize> {
     /// Process PID.
     pub pid: Pid,
-    /// Child process definitions.
-    pub processes: Processes<N>,
     /// Child processes.
     #[deref]
     pub children: Peers<N>,
@@ -97,13 +114,13 @@ impl<const N: usize> Parent<N> {
         let program = env::current_exe()?;
         let mut children = Peers::default();
 
-        children.push(Peer {
-            handler: None,
-            pid: getpid(),
-        });
-
         for proc in &processes {
-            if proc.name == PARENT {
+            if !proc.connect {
+                children.push(Peer {
+                    name: proc.name,
+                    handler: None,
+                    pid: Pid::this(),
+                });
                 continue;
             }
             let (handler, remote) = Handler::pair()?;
@@ -144,6 +161,7 @@ impl<const N: usize> Parent<N> {
             };
 
             children.push(Peer {
+                name: proc.name,
                 handler: Some(handler),
                 pid,
             })
@@ -152,31 +170,86 @@ impl<const N: usize> Parent<N> {
         assert_eq!(children.len(), N, "child processes");
 
         Ok(Self {
-            pid: getpid(),
-            processes,
+            pid: Pid::this(),
             children,
         })
+    }
+
+    pub async fn connect(self, processes: [Processes<N>; N]) -> Result<Self, Error> {
+        // Filter for bi-directional child-child connections.
+        let pairs = processes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .flat_map(|(a, outer)| {
+                outer
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter_map(move |(b, inner)| {
+                        if !inner.connect || a == b {
+                            None
+                        } else if a < b {
+                            Some((a, b))
+                        } else {
+                            Some((b, a))
+                        }
+                    })
+            })
+            .collect::<HashSet<_>>();
+
+        for (a, b) in pairs {
+            let (left, right) = Handler::socketpair()?;
+
+            self[a]
+                .send_message_internal(Message::connect(b), Some(&left), &())
+                .await?;
+            self[b]
+                .send_message_internal(Message::connect(a), Some(&right), &())
+                .await?;
+        }
+
+        Ok(self)
     }
 }
 
 /// A child process.
 #[derive(Debug, Deref, Display)]
 #[display(fmt = "{}({})", "name, pid")]
-pub struct Child {
+pub struct Child<const N: usize> {
     /// Process name.
     pub name: &'static str,
     /// Process PID.
     pub pid: Pid,
     /// Process' parenr handler.
     #[deref]
-    pub parent: Handler,
+    pub peers: Peers<N>,
 }
 
-impl Child {
+impl<const N: usize> Child<N> {
     /// Creates a new child and drops privileges.
-    pub async fn new(name: &'static str, options: &Options) -> Result<Self, Error> {
+    pub async fn new<const M: usize>(
+        processes: Processes<M>,
+        name: &'static str,
+        options: &Options,
+    ) -> Result<Self, Error> {
+        // TODO: replace this with complex const generic constraints, once stable.
+        assert!(M <= N);
+
         set_cloexec(PRIVSEP_FD, true)?;
-        let parent = Handler::from_raw_fd(PRIVSEP_FD)?;
+
+        let mut peers = Peers::default();
+        peers.push(Peer {
+            name: processes[0].name,
+            handler: Some(Handler::from_raw_fd(PRIVSEP_FD)?),
+            ..Default::default()
+        });
+        for process in processes.iter().skip(1) {
+            peers.push(Peer {
+                name: process.name,
+                ..Default::default()
+            });
+        }
 
         if !options.disable_privdrop {
             // Get the privdrop user.
@@ -224,10 +297,32 @@ impl Child {
             panic!("Received pipe signal, terminating");
         });
 
+        // Wait for imsg sockets to peer processes.
+        let mut wait_connections = processes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(id, proc)| proc.connect.then(|| id))
+            .collect::<HashSet<_>>();
+
+        while !wait_connections.is_empty() {
+            match peers[0].recv_message().await? {
+                Some((Message { id: 1, peer_id, .. }, Some(fd), ())) => {
+                    let peer_id = peer_id as usize;
+                    if !wait_connections.remove(&peer_id) {
+                        panic!("Received invalid peer message, terminating");
+                    }
+                    fd.is_open()?;
+                    peers[peer_id].handler = Some(Handler::from_raw_fd(fd)?);
+                }
+                _ => panic!("Failed to get peer message, terminating"),
+            }
+        }
+
         Ok(Self {
             name,
-            pid: getpid(),
-            parent,
+            pid: Pid::this(),
+            peers,
         })
     }
 }
