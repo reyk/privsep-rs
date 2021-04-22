@@ -12,15 +12,20 @@ use std::{
     borrow::Cow,
     env,
     ffi::CString,
+    ops,
     os::unix::{
         ffi::OsStrExt,
         io::{AsRawFd, RawFd},
     },
     path::Path,
 };
+use tokio::signal::unix::{signal, SignalKind};
 
 /// Internal file descriptor that is passed between processes.
 pub const PRIVSEP_FD: RawFd = 3;
+
+/// Reserved name for the parent process.
+pub const PARENT: &str = "parent";
 
 /// General options for the privsep setup.
 #[derive(Debug, Default)]
@@ -43,21 +48,31 @@ pub struct Process {
 pub type Processes<const N: usize> = [Process; N];
 
 /// A child process from the parent point of view.
-#[derive(Debug, Deref)]
-pub struct ChildProcess {
+#[derive(Debug)]
+pub struct Peer {
     /// IPC channel to the child process.
-    #[deref]
-    pub handler: Handler,
+    pub handler: Option<Handler>,
     /// Process PID.
     pub pid: Pid,
 }
 
+impl ops::Deref for Peer {
+    type Target = Handler;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        // This panics when the handler is None which should never
+        // happen as it violates the configured privsep channels.
+        self.handler.as_ref().expect("unconfigured privsep channel")
+    }
+}
+
 /// The list of child processes.
-pub type Children<const N: usize> = ArrayVec<ChildProcess, N>;
+pub type Peers<const N: usize> = ArrayVec<Peer, N>;
 
 /// The privileged parent.
 #[derive(Debug, Display, Deref)]
-#[display(fmt = "parent({})", "pid")]
+#[display(fmt = "{}({})", "crate::process::PARENT", "pid")]
 pub struct Parent<const N: usize> {
     /// Process PID.
     pub pid: Pid,
@@ -65,7 +80,7 @@ pub struct Parent<const N: usize> {
     pub processes: Processes<N>,
     /// Child processes.
     #[deref]
-    pub children: Children<N>,
+    pub children: Peers<N>,
 }
 
 impl<const N: usize> Parent<N> {
@@ -75,10 +90,22 @@ impl<const N: usize> Parent<N> {
             return Err(Error::PermissionDenied);
         }
 
+        if processes.first().map(|process| process.name) != Some(PARENT) {
+            return Err(Error::MissingParent);
+        }
+
         let program = env::current_exe()?;
-        let mut children = Children::default();
+        let mut children = Peers::default();
+
+        children.push(Peer {
+            handler: None,
+            pid: getpid(),
+        });
 
         for proc in &processes {
+            if proc.name == PARENT {
+                continue;
+            }
             let (handler, remote) = Handler::pair()?;
 
             let pid = match unsafe { fork() }? {
@@ -87,7 +114,8 @@ impl<const N: usize> Parent<N> {
                     let fd = dup2(remote.as_raw_fd(), PRIVSEP_FD).unwrap();
                     set_cloexec(fd, false)?;
 
-                    // TODO: open /dev/null and dup2 stdin/stdout/stderr.
+                    // TODO: open /dev/null and dup2
+                    // stdin/stdout/stderr.
 
                     // TODO: we could eventually implement `closefrom`
                     // ourselves based on OpenSSH's `bsd-closefrom.c`.
@@ -115,7 +143,10 @@ impl<const N: usize> Parent<N> {
                 }
             };
 
-            children.push(ChildProcess { handler, pid })
+            children.push(Peer {
+                handler: Some(handler),
+                pid,
+            })
         }
 
         assert_eq!(children.len(), N, "child processes");
@@ -184,6 +215,14 @@ impl Child {
                 }
             }
         }
+
+        // Terminate the process when we receive a SIGPIPE - this
+        // happens when the parent terminates unexpectedly.
+        let mut sigpipe = signal(SignalKind::pipe())?;
+        tokio::spawn(async move {
+            sigpipe.recv().await;
+            panic!("Received pipe signal, terminating");
+        });
 
         Ok(Self {
             name,

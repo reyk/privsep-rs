@@ -38,6 +38,8 @@
 //! #[derive(Debug, Privsep)]
 //! #[username = "_relayd"]
 //! pub enum Privsep {
+//!     /// Parent process
+//!     Parent,
 //!     /// Health Check Engine
 //!     Health,
 //!     /// Packet Filter Engine

@@ -61,10 +61,10 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     let mut const_id = vec![];
     let mut const_ids = vec![];
     let mut const_names = vec![];
+    let mut child_names = vec![];
     let mut from_id = vec![];
 
     let doc = attrs.iter().filter(|a| a.path.is_ident("doc"));
-    let main_path: Path = parse_attribute_type(&attrs, "main_path", "parent::main")?;
 
     let disable_privdrop = attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
     let username = if let Some(username) = parse_attribute_value(&attrs, "username")? {
@@ -72,16 +72,10 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     } else if disable_privdrop {
         LitStr::new("", Span::call_site())
     } else {
-        return Err(Error::new(
-            Span::call_site(),
+        return Err(Error::new_spanned(
+            item,
             "`Privsep` requires `username` attribute",
         ));
-    };
-    let options = quote! {
-        privsep::process::Options {
-            disable_privdrop: #disable_privdrop,
-            ..Default::default()
-        }
     };
 
     for (id, variant) in item.variants.iter().enumerate() {
@@ -91,7 +85,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
         let name_snake = ident.to_string().to_case(Case::Snake);
         let name_upper = ident.to_string().to_case(Case::UpperSnake);
         let id_name = Ident::new(&(name_upper + "_ID"), Span::call_site());
-        let child_path: Path =
+        let main_path: Path =
             parse_attribute_type(&variant.attrs, "main_path", &(name_snake + "::main"))?;
 
         let child_username =
@@ -105,6 +99,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
                 ..Default::default()
             }
         };
+        child_names.push(name.clone());
 
         const_as_array.push(quote! {
             Process { name: #name },
@@ -127,18 +122,37 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             Self::#ident => #name,
         });
 
-        child_main.push(quote! {
-            #name => {
-                let child = Child::new(#name, &#child_options).await?;
-                #child_path(child).await
-            }
-        });
-
         from_id.push(quote! {
             #id => Ok(Self::#ident),
         });
+
+        let process;
+        let match_name;
+
+        if id == 0 {
+            process = quote! { Parent::new(Self::as_array(), &#child_options).await? };
+            match_name = quote! { _ };
+        } else {
+            process = quote! { Child::new(#name, &#child_options).await? };
+            match_name = quote! { #name };
+        }
+
+        child_main.push(quote! {
+            #match_name => {
+                let process = #process;
+                #main_path(process).await
+            }
+        });
     }
     let array_len = const_as_array.len();
+    let child_main = child_main.into_iter().rev().collect::<Vec<_>>();
+
+    if child_names.first().map(AsRef::as_ref) != Some("parent") {
+        return Err(Error::new_spanned(
+            item.variants,
+            "Missing `Parent` variant",
+        ));
+    }
 
     Ok(quote! {
         #(#doc)*
@@ -165,10 +179,6 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
                 let name = std::env::args().next().unwrap_or_default();
                 match name.as_ref() {
                     #(#child_main)*
-                    _ => {
-                        let parent = Parent::new(Self::as_array(), &#options).await?;
-                        #main_path(parent).await
-                    }
                 }
             }
         }

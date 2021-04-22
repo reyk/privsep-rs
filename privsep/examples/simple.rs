@@ -8,6 +8,8 @@ use std::env;
 #[derive(Debug, Privsep)]
 #[username = "nobody"]
 pub enum Privsep {
+    /// The parent process.
+    Parent,
     /// An unprivileged child process that prints hello.
     Hello,
     /// A copy of the hello process.
@@ -21,7 +23,7 @@ mod parent {
     use nix::sys::wait::{waitpid, WaitStatus};
     use privsep::{net::Fd, process::Parent};
     use privsep_log::{info, warn};
-    use std::{net::TcpListener, os::unix::io::IntoRawFd, process, time::Duration};
+    use std::{net::TcpListener, os::unix::io::IntoRawFd, process, sync::Arc, time::Duration};
     use tokio::{
         signal::unix::{signal, SignalKind},
         time::sleep,
@@ -33,6 +35,8 @@ mod parent {
             .await
             .map_err(|err| Error::GeneralError(Box::new(err)))?;
 
+        let parent = Arc::new(parent);
+
         info!("Hello, parent!");
 
         let mut sigchld = signal(SignalKind::child())?;
@@ -43,7 +47,10 @@ mod parent {
             .map(Fd::from);
 
         // Send a message to all children.
-        for id in Privsep::PROCESS_IDS.iter() {
+        for id in Privsep::PROCESS_IDS
+            .iter()
+            .filter(|id| **id != Privsep::PARENT_ID)
+        {
             parent[*id]
                 .send_message(23u32.into(), fd.as_ref(), &())
                 .await?;
