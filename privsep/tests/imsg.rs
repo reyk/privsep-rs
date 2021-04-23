@@ -35,7 +35,7 @@ async fn unix_channel() -> Result<(), std::io::Error> {
             };
 
             if let Err(err) = sender
-                .send_message(1u32.into(), fd.as_ref(), &message)
+                .send_message(imsg::Message::min(), fd.as_ref(), &message)
                 .await
             {
                 eprintln!("Failed to send message: {}", err);

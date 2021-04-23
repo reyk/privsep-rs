@@ -46,7 +46,7 @@ impl Handler {
         fd: Option<&Fd>,
         data: &T,
     ) -> Result<()> {
-        if message.id <= Message::RESERVED {
+        if message.id < Message::RESERVED {
             return Err(io::Error::new(io::ErrorKind::Other, "Reserved message ID"));
         }
         self.send_message_internal(message, fd, data).await
@@ -171,8 +171,8 @@ pub struct Message {
 }
 
 impl Message {
-    // Reserved IDs
-    const RESERVED: u32 = 10;
+    // Reserved IDs 0-10
+    pub const RESERVED: u32 = 10;
 
     /// Create new message header.
     pub fn new<T: Into<u32>>(id: T) -> Self {
@@ -183,6 +183,10 @@ impl Message {
             length,
             ..Default::default()
         }
+    }
+
+    pub fn min() -> Self {
+        Self::RESERVED.into()
     }
 
     pub fn connect(peer_id: usize) -> Self {
