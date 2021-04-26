@@ -1,22 +1,34 @@
 //! Internal message handling between privilege-separated processes.
 
 use crate::net::{AncillaryData, Fd, SocketAncillary, UnixStream, UnixStreamExt};
-use derive_more::{From, Into};
-use nix::unistd::getpid;
+use derive_more::Into;
+use nix::unistd::{close, getpid};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert::TryFrom,
     io::{self, Result},
     mem,
     os::unix::io::{AsRawFd, IntoRawFd, RawFd},
+    sync::atomic::{AtomicBool, Ordering},
 };
 use zerocopy::{AsBytes, FromBytes};
 
 /// `imsg` handler.
-#[derive(Debug, From, Into)]
+#[derive(Debug, Into)]
 pub struct Handler {
     /// Async half of a UNIX socketpair.
     socket: UnixStream,
+    /// Set after the stream was shut down.
+    shutdown: AtomicBool,
+}
+
+impl From<UnixStream> for Handler {
+    fn from(socket: UnixStream) -> Self {
+        Self {
+            socket,
+            shutdown: Default::default(),
+        }
+    }
 }
 
 impl Handler {
@@ -59,6 +71,12 @@ impl Handler {
         fd: Option<&Fd>,
         data: &T,
     ) -> Result<()> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Handler is closed",
+            ));
+        }
         let data = bincode::serialize(data)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         message.pid = getpid().as_raw();
@@ -99,6 +117,12 @@ impl Handler {
     pub async fn recv_message<T: DeserializeOwned>(
         &self,
     ) -> Result<Option<(Message, Option<Fd>, T)>> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Handler is closed",
+            ));
+        }
         let mut ancillary_buffer = [0u8; 128];
         let mut ancillary = SocketAncillary::new(&mut ancillary_buffer[..]);
 
@@ -145,6 +169,13 @@ impl Handler {
         }
 
         Ok(Some((message, fd_result, result)))
+    }
+
+    /// Forcefully close the imsg handler without dropping it.
+    pub fn shutdown(&self) {
+        let fd = self.as_raw_fd();
+        let _ = close(fd);
+        self.shutdown.store(true, Ordering::SeqCst);
     }
 }
 

@@ -31,6 +31,9 @@ pub enum Error {
     Privdrop(&'static str, Box<dyn std::error::Error>),
     #[display(fmt = "General error: {}", "_0")]
     GeneralError(Box<dyn std::error::Error>),
+    #[display(fmt = "Lost {}, terminated", "_0")]
+    #[from(ignore)]
+    Terminated(&'static str),
 }
 
 impl std::error::Error for Error {}

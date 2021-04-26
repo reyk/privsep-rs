@@ -8,8 +8,14 @@ use arrayvec::ArrayVec;
 use close_fds::close_open_fds;
 use derive_more::{AsRef, Deref, Display, From};
 use nix::{
-    fcntl::{fcntl, FcntlArg, FdFlag},
-    unistd::{self, chdir, chroot, dup2, execve, fork, getuid, ForkResult, Pid, User},
+    fcntl::{fcntl, open, FcntlArg, FdFlag, OFlag},
+    sys::{
+        signal::{signal, SigHandler, Signal},
+        stat::Mode,
+    },
+    unistd::{
+        self, chdir, chroot, close, dup2, execve, fork, geteuid, setsid, ForkResult, Pid, User,
+    },
 };
 use std::{
     borrow::Cow,
@@ -23,21 +29,31 @@ use std::{
     },
     path::Path,
 };
-use tokio::signal::unix::{signal, SignalKind};
 
 /// Internal file descriptor that is passed between processes.
-pub const PRIVSEP_FD: RawFd = 3;
+pub const PRIVSEP_FD: RawFd = libc::STDERR_FILENO + 1;
 
 /// Reserved name for the parent process.
 pub const PARENT: &str = "parent";
 
+/// Runtime-configurable options for the privsep setup.
+#[derive(Clone, Debug, Default)]
+pub struct Config {
+    /// Whether to run the program in foreground.
+    pub foreground: bool,
+    /// The log_level if RUST_LOG is not set.
+    pub log_level: Option<String>,
+}
+
 /// General options for the privsep setup.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, From)]
 pub struct Options {
     /// This stop requiring root and disables privdrop.
     pub disable_privdrop: bool,
     /// The default privdrop username, if enabled.
     pub username: Cow<'static, str>,
+    /// The runtime configuration.
+    pub config: Config,
 }
 
 /// Child process startup definition.
@@ -103,7 +119,7 @@ pub struct Parent<const N: usize> {
 impl<const N: usize> Parent<N> {
     /// Creates a new parent and forks the children.
     pub async fn new(processes: Processes<N>, options: &Options) -> Result<Parent<N>, Error> {
-        if !options.disable_privdrop && !getuid().is_root() {
+        if !options.disable_privdrop && !geteuid().is_root() {
             return Err(Error::PermissionDenied);
         }
 
@@ -128,11 +144,11 @@ impl<const N: usize> Parent<N> {
             let pid = match unsafe { fork() }? {
                 ForkResult::Parent { child, .. } => child,
                 ForkResult::Child => {
-                    let fd = dup2(remote.as_raw_fd(), PRIVSEP_FD).unwrap();
-                    set_cloexec(fd, false)?;
+                    // Create a new session for the executed process.
+                    new_session(options.config.foreground, true)?;
 
-                    // TODO: open /dev/null and dup2
-                    // stdin/stdout/stderr.
+                    let fd = dup2(remote.as_raw_fd(), PRIVSEP_FD)?;
+                    set_cloexec(fd, false)?;
 
                     // TODO: we could eventually implement `closefrom`
                     // ourselves based on OpenSSH's `bsd-closefrom.c`.
@@ -150,7 +166,11 @@ impl<const N: usize> Parent<N> {
                     let args = [&CString::new(proc.name).unwrap()];
                     let env = [&CString::new(format!(
                         "RUST_LOG={}",
-                        env::var("RUST_LOG").unwrap_or_default()
+                        env::var("RUST_LOG")
+                            .ok()
+                            .as_deref()
+                            .or_else(|| options.config.log_level.as_deref())
+                            .unwrap_or_default()
                     ))
                     .unwrap()];
 
@@ -168,6 +188,9 @@ impl<const N: usize> Parent<N> {
         }
 
         assert_eq!(children.len(), N, "child processes");
+
+        // Closing the imsg pipes will terminate the program.
+        unsafe { signal(Signal::SIGPIPE, SigHandler::SigIgn) }?;
 
         Ok(Self {
             pid: Pid::this(),
@@ -289,13 +312,8 @@ impl<const N: usize> Child<N> {
             }
         }
 
-        // Terminate the process when we receive a SIGPIPE - this
-        // happens when the parent terminates unexpectedly.
-        let mut sigpipe = signal(SignalKind::pipe())?;
-        tokio::spawn(async move {
-            sigpipe.recv().await;
-            panic!("Received pipe signal, terminating");
-        });
+        // Closing the imsg pipes will terminate the program.
+        unsafe { signal(Signal::SIGPIPE, SigHandler::SigIgn) }?;
 
         // Wait for imsg sockets to peer processes.
         let mut wait_connections = processes
@@ -325,6 +343,14 @@ impl<const N: usize> Child<N> {
             peers,
         })
     }
+
+    /// Forcefully close all imsg handlers without dropping them.
+    pub fn shutdown(&self) {
+        self.peers
+            .iter()
+            .map(ops::Deref::deref)
+            .for_each(Handler::shutdown);
+    }
 }
 
 fn set_cloexec(fd: RawFd, add: bool) -> Result<(), Error> {
@@ -337,4 +363,44 @@ fn set_cloexec(fd: RawFd, add: bool) -> Result<(), Error> {
 fn path_to_cstr(path: &Path) -> CString {
     let ospath = path.as_os_str().as_bytes().to_vec();
     unsafe { CString::from_vec_unchecked(ospath) }
+}
+
+/// Portable wrapper of the daemon(3) function that got removed from macOS.
+pub fn daemon(no_close: bool, no_chdir: bool) -> Result<(), Error> {
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "macos")] {
+            match unsafe { fork() }? {
+                ForkResult::Parent { .. } => unsafe { libc::_exit(0) },
+                ForkResult::Child => new_session(no_close, no_chdir),
+            }
+        } else {
+            unistd::daemon(no_close, no_chdir).map_err(Into::into)
+        }
+    }
+}
+
+fn new_session(no_close: bool, no_chdir: bool) -> Result<(), Error> {
+    // Create a new session for the executed processes.
+    if setsid()? != Pid::this() {
+        return Err("Failed to create new session".into());
+    }
+
+    if !no_chdir {
+        let _ = chdir("/");
+    }
+
+    // Daemons detach from terminal.
+    if !no_close {
+        // Ignore errors as it is done in OpenSSH's daemon.c compat code.
+        if let Ok(fd) = open("/dev/null", OFlag::O_RDWR, Mode::empty()) {
+            let _ = dup2(fd, libc::STDIN_FILENO);
+            let _ = dup2(fd, libc::STDOUT_FILENO);
+            let _ = dup2(fd, libc::STDERR_FILENO);
+            if fd > libc::STDERR_FILENO {
+                let _ = close(fd);
+            }
+        }
+    }
+
+    Ok(())
 }

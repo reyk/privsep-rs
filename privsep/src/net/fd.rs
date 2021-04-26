@@ -1,9 +1,13 @@
 //! Owned, droppable file descriptors.
 
+use crate::error::Error;
 use derive_more::{From, Into};
-use nix::fcntl::{fcntl, FcntlArg};
+use nix::{
+    fcntl::{fcntl, FcntlArg},
+    unistd::{close, dup},
+};
 use std::{
-    io::{self, Result},
+    io::{self},
     mem,
     os::unix::io::{AsRawFd, IntoRawFd, RawFd},
 };
@@ -14,24 +18,21 @@ pub struct Fd(RawFd);
 
 impl Fd {
     /// Duplicate the file descriptor into an independent `Fd`.
-    pub fn duplicate(&self) -> Result<Self> {
-        match unsafe { libc::dup(self.0) } {
-            -1 => Err(io::Error::last_os_error()),
-            fd => Ok(fd.into()),
-        }
+    pub fn duplicate(&self) -> Result<Self, Error> {
+        dup(self.0).map(Self::from).map_err(Error::from)
     }
 
     /// Check if the file descriptor is valid,
-    pub fn is_open(&self) -> Result<()> {
+    pub fn is_open(&self) -> Result<(), Error> {
         fcntl(self.0, FcntlArg::F_GETFD)
             .map(|_| ())
-            .map_err(|err| io::Error::new(io::ErrorKind::NotConnected, err))
+            .map_err(|err| io::Error::new(io::ErrorKind::NotConnected, err).into())
     }
 }
 
 impl Drop for Fd {
     fn drop(&mut self) {
-        unsafe { libc::close(self.0) };
+        let _ = close(self.0);
     }
 }
 

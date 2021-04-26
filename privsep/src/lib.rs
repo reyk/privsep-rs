@@ -67,4 +67,4 @@ pub mod imsg;
 pub mod net;
 pub mod process;
 
-pub use error::Error;
+pub use {error::Error, process::Config};

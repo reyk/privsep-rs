@@ -145,7 +145,10 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
         unimplemented!()
     };
     let mut options = quote! {
-        Default::default()
+        Options {
+            config,
+            ..Default::default()
+        }
     };
 
     // Configure processes.
@@ -170,6 +173,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             disable_privdrop || attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
         let child_options = quote! {
             privsep::process::Options {
+                config: config.clone(),
                 disable_privdrop: #child_disable_privdrop,
                 username: #child_username.into(),
                 ..Default::default()
@@ -231,7 +235,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             child_main.push(quote! {
                 #name => {
                     let process = #process;
-                    #child_main_path(process).await
+                    #child_main_path(process, config).await
                 }
             });
         } else {
@@ -270,14 +274,14 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
             }
 
             #[doc = "Start parent or child process."]
-            pub async fn main() -> Result<(), privsep::Error> {
+            pub async fn main(config: privsep::Config) -> Result<(), privsep::Error> {
                 use privsep::process::{Child, Parent, Process};
                 let name = std::env::args().next().unwrap_or_default();
                 match name.as_ref() {
                     #(#child_main)*
                     _ => {
                         let process = Parent::new(Self::as_array(), &#options).await?;
-                        #main_path(process.connect([#(#child_peers)*]).await?).await
+                        #main_path(process.connect([#(#child_peers)*]).await?, config).await
                     }
                 }
             }

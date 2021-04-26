@@ -1,7 +1,6 @@
 [package]
 name = "privsep"
 version = "0.0.1-test.5"
-rust = "1.51"
 authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 license = "ISC"
