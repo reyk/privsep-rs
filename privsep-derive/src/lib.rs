@@ -176,7 +176,6 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
                 config: config.clone(),
                 disable_privdrop: #child_disable_privdrop,
                 username: #child_username.into(),
-                ..Default::default()
             }
         };
         child_names.push(name.clone());

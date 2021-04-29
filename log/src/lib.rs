@@ -60,6 +60,7 @@ use serde_derive::{Deserialize, Serialize};
 use slog::{Drain, Level, Logger, OwnedKVList, Record, KV};
 use slog_scope::GlobalLoggerGuard;
 use std::{
+    env,
     ffi::{CStr, CString},
     fmt,
     io::{self, Write},
@@ -193,6 +194,15 @@ pub fn sync_logger<N: AsRef<str>, C: Into<Config>>(
     };
 
     Ok(guard.into())
+}
+
+/// Helper to derive log level from verbosity.
+pub fn verbose(count: usize) -> String {
+    match count {
+        0 => env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+        1 => "debug".to_string(),
+        _ => "trace".to_string(),
+    }
 }
 
 /// Wrapper for the global logger guard.

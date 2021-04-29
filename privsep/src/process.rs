@@ -45,6 +45,16 @@ pub struct Config {
     pub log_level: Option<String>,
 }
 
+#[cfg(feature = "log")]
+impl From<&Config> for privsep_log::Config {
+    fn from(config: &Config) -> Self {
+        Self {
+            foreground: config.foreground,
+            filter: config.log_level.clone(),
+        }
+    }
+}
+
 /// General options for the privsep setup.
 #[derive(Debug, Default, From)]
 pub struct Options {
@@ -163,7 +173,10 @@ impl<const N: usize> Parent<N> {
                     }
 
                     let name = path_to_cstr(&program);
-                    let args = [&CString::new(proc.name).unwrap()];
+                    let args = [
+                        &CString::new(proc.name).unwrap(),
+                        &CString::new(if options.config.foreground { "-d" } else { "" }).unwrap(),
+                    ];
                     let env = [&CString::new(format!(
                         "RUST_LOG={}",
                         env::var("RUST_LOG")
@@ -265,12 +278,12 @@ impl<const N: usize> Child<N> {
         peers.push(Peer {
             name: processes[0].name,
             handler: Some(Handler::from_raw_fd(PRIVSEP_FD)?),
-            ..Default::default()
+            ..Peer::default()
         });
         for process in processes.iter().skip(1) {
             peers.push(Peer {
                 name: process.name,
-                ..Default::default()
+                ..Peer::default()
             });
         }
 

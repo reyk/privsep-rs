@@ -31,9 +31,18 @@ features = [ "net", "time", "rt-multi-thread", "macros", "io-util", "signal" ]
 version = "0.0.1-test.5"
 path = "../privsep-derive"
 
+[dependencies.privsep-log]
+optional = true
+version = "0.0.1-test.1"
+path = "../log"
+
 [dev-dependencies.privsep-log]
 version = "0.0.1-test.1"
 path = "../log"
 
 [[example]]
 name = "simple"
+
+[features]
+default = []
+log = [ "privsep-log" ]
