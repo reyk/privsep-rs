@@ -250,10 +250,11 @@ impl<const N: usize> Parent<N> {
 }
 
 /// A child process.
-#[derive(Debug, Deref, Display)]
+#[derive(AsRef, Debug, Deref, Display)]
 #[display(fmt = "{}({})", "name, pid")]
 pub struct Child<const N: usize> {
     /// Process name.
+    #[as_ref]
     pub name: &'static str,
     /// Process PID.
     pub pid: Pid,
