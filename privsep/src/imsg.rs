@@ -1,14 +1,17 @@
 //! Internal message handling between privilege-separated processes.
 
 use crate::net::{AncillaryData, Fd, SocketAncillary, UnixStream, UnixStreamExt};
+use bytes::{BufMut, BytesMut};
 use derive_more::Into;
 use nix::unistd::{close, getpid};
+use parking_lot::Mutex;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert::TryFrom,
     io::{self, Result},
     mem,
     os::unix::io::{AsRawFd, IntoRawFd, RawFd},
+    slice,
     sync::atomic::{AtomicBool, Ordering},
 };
 use zerocopy::{AsBytes, FromBytes};
@@ -20,6 +23,8 @@ pub struct Handler {
     socket: UnixStream,
     /// Set after the stream was shut down.
     shutdown: AtomicBool,
+    /// Read buffer.
+    read_buffer: Mutex<BytesMut>,
 }
 
 impl From<UnixStream> for Handler {
@@ -27,11 +32,14 @@ impl From<UnixStream> for Handler {
         Self {
             socket,
             shutdown: Default::default(),
+            read_buffer: Mutex::new(BytesMut::with_capacity(Self::BUFFER_LENGTH)),
         }
     }
 }
 
 impl Handler {
+    pub const BUFFER_LENGTH: usize = 0xffff;
+
     /// Create new handler pair.
     pub fn pair() -> Result<(Self, Self)> {
         UnixStream::pair().map(|(a, b)| (a.into(), b.into()))
@@ -123,50 +131,69 @@ impl Handler {
                 "Handler is closed",
             ));
         }
-        let mut ancillary_buffer = [0u8; 128];
-        let mut ancillary = SocketAncillary::new(&mut ancillary_buffer[..]);
-
-        let mut message = Message::default();
-        let mut message_buf = message.as_bytes_mut();
-
-        let mut buf = [0u8; 0xffff];
-        let bufs = &mut [
-            io::IoSliceMut::new(&mut message_buf),
-            io::IoSliceMut::new(&mut buf[..]),
-        ][..];
-
-        let length = self
-            .socket
-            .recv_vectored_with_ancillary(bufs, &mut ancillary)
-            .await?;
-        if length == 0 {
-            return Ok(None);
-        }
-        let message_length = message.length as usize;
-
-        if length < mem::size_of::<Message>() || length < message_length {
-            return Err(io::Error::new(io::ErrorKind::WriteZero, "short message"));
-        }
-
-        let result = bincode::deserialize(&buf)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
         let mut fd_result = None;
-        for ancillary_result in ancillary.messages().flatten() {
-            #[allow(irrefutable_let_patterns)]
-            if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
-                for fd in scm_rights {
-                    let fd = Fd::from(fd);
+        let mut message = Message::default();
+        let mut message_length: usize;
 
-                    // We only return one fd per message and
-                    // auto-close all the remaining ones once the `Fd`
-                    // is dropped.
-                    if fd_result.is_none() {
-                        fd_result = Some(fd);
+        let received_buf = loop {
+            let mut buf = self.read_buffer.lock();
+
+            if buf.len() >= Message::HEADER_LENGTH {
+                message
+                    .as_bytes_mut()
+                    .copy_from_slice(&buf[..Message::HEADER_LENGTH]);
+                message_length = message.length as usize;
+
+                // We have a complete message, break out of the loop.
+                if buf.len() >= message_length {
+                    break buf.split_to(message_length);
+                }
+            }
+
+            let mut ancillary_buffer = [0u8; 128];
+            let mut ancillary = SocketAncillary::new(&mut ancillary_buffer[..]);
+
+            buf.reserve(Self::BUFFER_LENGTH);
+            let slice = unsafe {
+                slice::from_raw_parts_mut(buf.chunk_mut().as_mut_ptr(), Self::BUFFER_LENGTH)
+            };
+            let bufs = &mut [io::IoSliceMut::new(slice)][..];
+
+            // Read more data.  This is also our yield point in the loop.
+            let length = self
+                .socket
+                .recv_vectored_with_ancillary(bufs, &mut ancillary)
+                .await?;
+            if length == 0 {
+                return Ok(None);
+            }
+            unsafe { buf.advance_mut(length) };
+
+            for ancillary_result in ancillary.messages().flatten() {
+                #[allow(irrefutable_let_patterns)]
+                if let AncillaryData::ScmRights(scm_rights) = ancillary_result {
+                    for fd in scm_rights {
+                        let fd = Fd::from(fd);
+
+                        // We only return one fd per message and auto-
+                        // close all the remaining ones once the `Fd`
+                        // is dropped.
+                        if fd_result.is_none() {
+                            fd_result = Some(fd);
+                        }
                     }
                 }
             }
+        };
+
+        message_length -= Message::HEADER_LENGTH;
+        let result = if message_length > 0 {
+            bincode::deserialize(&received_buf[Message::HEADER_LENGTH..message_length])
+        } else {
+            bincode::deserialize(&[])
         }
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
         Ok(Some((message, fd_result, result)))
     }
@@ -202,12 +229,15 @@ pub struct Message {
 }
 
 impl Message {
-    // Reserved IDs 0-10
+    /// Reserved IDs 0-10
     pub const RESERVED: u32 = 10;
+
+    /// Message header length.
+    pub const HEADER_LENGTH: usize = mem::size_of::<Self>();
 
     /// Create new message header.
     pub fn new<T: Into<u32>>(id: T) -> Self {
-        let length = mem::size_of::<Self>() as u16;
+        let length = Self::HEADER_LENGTH as u16;
         Message {
             id: id.into(),
             pid: getpid().as_raw(),
