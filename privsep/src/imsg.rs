@@ -187,8 +187,7 @@ impl Handler {
             }
         };
 
-        message_length -= Message::HEADER_LENGTH;
-        let result = if message_length > 0 {
+        let result = if message_length > Message::HEADER_LENGTH {
             bincode::deserialize(&received_buf[Message::HEADER_LENGTH..message_length])
         } else {
             bincode::deserialize(&[])
