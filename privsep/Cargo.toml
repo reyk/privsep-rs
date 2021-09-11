@@ -19,11 +19,11 @@ cfg-if = "1.0.0"
 close_fds = "0.3.1"
 derive_more = "0.99"
 libc = "0.2.90"
-nix = "0.20.0"
+nix = "0.22.1"
 parking_lot = "0.11.1"
 serde = "1.0.124"
 serde_derive = "1.0.124"
-zerocopy = "0.5.0"
+zerocopy = "0.6.0"
 
 [dependencies.tokio]
 version = "1.4.0"
