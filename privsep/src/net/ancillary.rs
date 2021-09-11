@@ -2,9 +2,7 @@
 //!
 //! The code is based on "unstable" nightly-only code from the Rust
 //! std library ([original source](https://raw.githubusercontent.com/rust-lang/rust/master/library/std/src/sys/unix/ext/net/ancillary.rs)).
-//! It is modified to work outside the std library and
-//! to work include support for macOS (not present in the current
-//! version as of this writing).
+//! It is modified to work outside of the std library.
 //!
 //! Licensed under the MIT license:
 //!
