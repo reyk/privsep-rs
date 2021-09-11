@@ -54,7 +54,7 @@ async fn unix_channel() -> Result<(), std::io::Error> {
                 );
             }
             Err(err) => {
-                eprintln!("Failed to receive messafe: {}", err);
+                eprintln!("Failed to receive message: {}", err);
                 break Err(err);
             }
         }
