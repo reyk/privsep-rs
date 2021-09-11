@@ -1,6 +1,6 @@
 [package]
 name = "privsep-derive"
-version = "0.0.1-test.6"
+version = "0.0.1-test.7"
 authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 license = "ISC"

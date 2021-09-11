@@ -16,10 +16,7 @@ This crate uses const generics and requires Rust 1.51 or later.
 Many things, including:
 
 - Improve documentation and rustdoc.
-- `net` / `imsg`:
-  - Fix reading writing of partial messages (async loop until done).
 - `process`:
-  - Setup child to child channels.
   - Allow to spawn multiple processes of a same child (not really needed with tokio).
   - Improve naming of structs.
   - Add support for OS-specific sandboxing (e.g. OpenBSD pledge)
