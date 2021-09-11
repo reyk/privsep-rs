@@ -100,7 +100,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
 
     // Get the global attributes.
     let disable_privdrop = attrs.iter().any(|a| a.path.is_ident("disable_privdrop"));
-    let username = if let Some(username) = parse_attribute_value(&attrs, "username")? {
+    let username = if let Some(username) = parse_attribute_value(attrs, "username")? {
         username
     } else if disable_privdrop {
         LitStr::new("", Span::call_site())
@@ -129,7 +129,7 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
     let temp_map = connect_map.clone();
     for (key, value) in temp_map.into_iter() {
         for entry in value.iter() {
-            if !children.contains(&entry) {
+            if !children.contains(entry) {
                 return Err(Error::new_spanned(
                     item,
                     &format!("Connection to unknown process `{}`", entry),
@@ -180,13 +180,13 @@ fn derive_privsep_enum(item: ItemEnum) -> Result<TokenStream, Error> {
         };
         child_names.push(name.clone());
 
-        let connect = connect_map.get(&child_ident).unwrap_or(&not_connected);
+        let connect = connect_map.get(child_ident).unwrap_or(&not_connected);
 
         let child_connect = children
             .iter()
             .enumerate()
             .map(|(id, child)| {
-                let is_connected = id == 0 || connect.contains(&child);
+                let is_connected = id == 0 || connect.contains(child);
                 quote! {
                     Process {
                         name: Self::as_static_str(&Self::#child),

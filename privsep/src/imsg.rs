@@ -92,7 +92,7 @@ impl Handler {
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         let message_length = message.length as usize;
         let iovs = [
-            io::IoSlice::new(&message.as_bytes()),
+            io::IoSlice::new(message.as_bytes()),
             io::IoSlice::new(&data),
         ];
         let bufs = if data.is_empty() {
@@ -111,7 +111,7 @@ impl Handler {
 
         let length = self
             .socket
-            .send_vectored_with_ancillary(&bufs, &mut ancillary)
+            .send_vectored_with_ancillary(bufs, &mut ancillary)
             .await?;
 
         if length != message_length {

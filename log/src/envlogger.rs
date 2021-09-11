@@ -51,13 +51,13 @@ impl From<String> for Directives {
             .filter_map(|filter| {
                 let kv = filter.split('=').collect::<Vec<_>>();
                 if kv.len() == 1 {
-                    Level::from_str(&kv[0]).ok().map(|value| (None, value))
+                    Level::from_str(kv[0]).ok().map(|value| (None, value))
                 } else if kv.len() == 2 {
                     let key = kv[0]
                         .chars()
                         .all(|c| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | ':' | '_'))
                         .then(|| kv[0].to_string());
-                    key.and_then(|key| Level::from_str(&kv[1]).ok().map(|value| (Some(key), value)))
+                    key.and_then(|key| Level::from_str(kv[1]).ok().map(|value| (Some(key), value)))
                 } else {
                     None
                 }
