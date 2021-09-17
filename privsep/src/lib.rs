@@ -41,6 +41,7 @@
 //!     /// Parent process
 //!     Parent,
 //!     /// Health Check Engine
+//!     #[connect(Relay, Redirect)]
 //!     Health,
 //!     /// Packet Filter Engine
 //!     Redirect,

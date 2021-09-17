@@ -1,6 +1,6 @@
 [package]
 name = "privsep-log"
-version = "0.0.1-test.3"
+version = "0.0.1"
 authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 license = "ISC"
@@ -24,3 +24,6 @@ tokio = { version = "1.4.0", features = [ "sync" ] }
 
 [dev-dependencies]
 tokio = { version = "1.4.0", features = [ "sync", "rt-multi-thread", "macros", "time" ] }
+
+[features]
+debug = [ "slog/max_level_trace" ]

@@ -1,6 +1,6 @@
 [package]
 name = "privsep"
-version = "0.0.1-test.7"
+version = "0.0.1"
 authors = ["Reyk Floeter <contact@reykfloeter.com>"]
 edition = "2018"
 license = "ISC"
@@ -30,16 +30,16 @@ version = "1.4.0"
 features = [ "net", "time", "rt-multi-thread", "macros", "io-util", "signal" ]
 
 [dependencies.privsep-derive]
-version = "0.0.1-test.7"
+version = "0.0.1"
 path = "../privsep-derive"
 
 [dependencies.privsep-log]
 optional = true
-version = "0.0.1-test.3"
+version = "0.0.1"
 path = "../log"
 
 [dev-dependencies.privsep-log]
-version = "0.0.1-test.3"
+version = "0.0.1"
 path = "../log"
 
 [[example]]
