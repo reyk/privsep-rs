@@ -12,7 +12,6 @@ pub enum Privsep {
     /// An unprivileged child process that prints hello.
     Hello,
     /// A copy of the hello process.
-    #[main_path = "hello::main"]
     #[connect(Hello)]
     Child,
 }
@@ -99,7 +98,7 @@ mod parent {
                         None => break Err(Error::Terminated(Privsep::Hello.as_static_str())),
                         Some((message, _, _)) => {
                             info!(
-                                "received message {:?}", message;
+                                "received hello message {:?}", message;
                                 "source" => Privsep::Hello.as_ref(),
                             );
                             sleep(Duration::from_secs(1)).await;
@@ -113,6 +112,73 @@ mod parent {
 }
 
 /// Unprivileged child process.
+mod child {
+    use crate::{Error, Privsep};
+    use privsep::process::Child;
+    use privsep_log::{debug, info, warn};
+    use std::{sync::Arc, time::Duration};
+    use tokio::time::{interval, sleep};
+
+    // main entrypoint to the child processes
+    pub async fn main<const N: usize>(
+        child: Child<N>,
+        config: privsep::Config,
+    ) -> Result<(), Error> {
+        let _guard = privsep_log::async_logger(&child.to_string(), config.foreground)
+            .await
+            .map_err(|err| Error::GeneralError(Box::new(err)))?;
+
+        let child = Arc::new(child);
+
+        info!("Hello, child {}!", child);
+
+        tokio::spawn(async {
+            // other client stuff here...
+            let mut interval = interval(Duration::from_secs(3));
+            loop {
+                interval.tick().await;
+                debug!("tick");
+            }
+        });
+
+        loop {
+            tokio::select! {
+                message = child[Privsep::PARENT_ID].recv_message::<()>() => {
+                    match message? {
+                        Some((message, _, _)) => {
+                            info!("received message {:?}", message);
+                            sleep(Duration::from_secs(1)).await;
+                            if let Err(err) = child[Privsep::PARENT_ID]
+                                .send_message(message, None, &())
+                                .await
+                            {
+                                warn!("failed to send message: {}", err);
+                            }
+                        }
+                        None => break Err(Error::Terminated(Privsep::Parent.as_static_str())),
+                    }
+                }
+                message = child[Privsep::HELLO_ID].recv_message::<()>() => {
+                    match message? {
+                        Some((message, _, _)) => {
+                            info!("received hello message {:?}", message);
+                            sleep(Duration::from_secs(1)).await;
+                            if let Err(err) = child[Privsep::HELLO_ID]
+                                .send_message(message, None, &())
+                                .await
+                            {
+                                warn!("failed to send message: {}", err);
+                            }
+                        }
+                        None => break Err(Error::Terminated(Privsep::Hello.as_static_str())),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Another unprivileged child process.
 mod hello {
     use crate::{Error, Privsep};
     use privsep::process::Child;
@@ -143,18 +209,43 @@ mod hello {
         });
 
         loop {
-            match child[Privsep::PARENT_ID].recv_message::<()>().await? {
-                Some((message, _, _)) => {
-                    info!("received message {:?}", message);
-                    sleep(Duration::from_secs(1)).await;
-                    if let Err(err) = child[Privsep::PARENT_ID]
-                        .send_message(message, None, &())
-                        .await
-                    {
-                        warn!("failed to send message: {}", err);
+            tokio::select! {
+                message = child[Privsep::PARENT_ID].recv_message::<()>() => {
+                    match message? {
+                        Some((message, _, _)) => {
+                            info!("received message {:?}", message);
+                            sleep(Duration::from_secs(1)).await;
+                            if let Err(err) = child[Privsep::PARENT_ID]
+                                .send_message(message, None, &())
+                                .await
+                            {
+                                warn!("failed to send message: {}", err);
+                            }
+
+                            if let Err(err) = child[Privsep::CHILD_ID]
+                                .send_message(23u32.into(), None, &())
+                                .await {
+                                warn!("failed to send message to sibling: {}", err);
+                            }
+                        }
+                        None => break Err(Error::Terminated(Privsep::Parent.as_static_str())),
                     }
                 }
-                None => break Err(Error::Terminated(Privsep::Parent.as_static_str())),
+                message = child[Privsep::CHILD_ID].recv_message::<()>() => {
+                    match message? {
+                        Some((message, _, _)) => {
+                            info!("received message {:?}", message);
+                            sleep(Duration::from_secs(1)).await;
+                            if let Err(err) = child[Privsep::CHILD_ID]
+                                .send_message(message, None, &())
+                                .await
+                            {
+                                warn!("failed to send message: {}", err);
+                            }
+                        }
+                        None => break Err(Error::Terminated(Privsep::Child.as_static_str())),
+                    }
+                }
             }
         }
     }

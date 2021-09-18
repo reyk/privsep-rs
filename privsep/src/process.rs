@@ -108,7 +108,9 @@ impl ops::Deref for Peer {
     fn deref(&self) -> &Self::Target {
         // This panics when the handler is None which should never
         // happen as it violates the configured privsep channels.
-        self.handler.as_ref().expect("unconfigured privsep channel")
+        self.handler
+            .as_ref()
+            .expect(&format!("unconfigured privsep channel: {}", self.name))
     }
 }
 
@@ -345,6 +347,7 @@ impl<const N: usize> Child<N> {
                         panic!("Received invalid peer message, terminating");
                     }
                     fd.is_open()?;
+                    println!("{} connect {}", name, peers[peer_id].name);
                     peers[peer_id].handler = Some(Handler::from_raw_fd(fd)?);
                 }
                 _ => panic!("Failed to get peer message, terminating"),

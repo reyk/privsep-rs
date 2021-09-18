@@ -56,7 +56,8 @@ impl Handler {
 
     /// Create half of a handler pair from a file descriptor.
     pub fn from_raw_fd<T: IntoRawFd>(fd: T) -> Result<Handler> {
-        unsafe { UnixStream::from_raw_fd(fd.into_raw_fd()).map(Into::into) }
+        let fd = fd.into_raw_fd();
+        unsafe { UnixStream::from_raw_fd(fd).map(Into::into) }
     }
 
     /// Send message to remote end.
