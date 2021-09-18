@@ -86,7 +86,7 @@ mod parent {
                         Some((message, _, _)) => {
                             info!(
                                 "received message {:?}", message;
-                                "source" => Privsep::Hello.as_ref(),
+                                "source" => Privsep::Child.as_ref(),
                             );
                             sleep(Duration::from_secs(1)).await;
                             parent[Privsep::CHILD_ID].send_message(message, fd.as_ref(), &()).await?;
@@ -141,12 +141,22 @@ mod child {
             }
         });
 
+        if let Err(err) = child[Privsep::HELLO_ID]
+            .send_message(42u32.into(), None, &())
+            .await
+        {
+            warn!("failed to send message to sibling: {}", err);
+        }
+
         loop {
             tokio::select! {
                 message = child[Privsep::PARENT_ID].recv_message::<()>() => {
                     match message? {
                         Some((message, _, _)) => {
-                            info!("received message {:?}", message);
+                            info!(
+                                "received message {:?}", message;
+                                "source" => Privsep::Parent.as_ref(),
+                            );
                             sleep(Duration::from_secs(1)).await;
                             if let Err(err) = child[Privsep::PARENT_ID]
                                 .send_message(message, None, &())
@@ -161,7 +171,10 @@ mod child {
                 message = child[Privsep::HELLO_ID].recv_message::<()>() => {
                     match message? {
                         Some((message, _, _)) => {
-                            info!("received hello message {:?}", message);
+                            info!(
+                                "received hello message {:?}", message;
+                                "source" => Privsep::Hello.as_ref(),
+                            );
                             sleep(Duration::from_secs(1)).await;
                             if let Err(err) = child[Privsep::HELLO_ID]
                                 .send_message(message, None, &())
@@ -213,19 +226,16 @@ mod hello {
                 message = child[Privsep::PARENT_ID].recv_message::<()>() => {
                     match message? {
                         Some((message, _, _)) => {
-                            info!("received message {:?}", message);
+                            info!(
+                                "received message {:?}", message;
+                                "source" => Privsep::Parent.as_ref(),
+                            );
                             sleep(Duration::from_secs(1)).await;
                             if let Err(err) = child[Privsep::PARENT_ID]
                                 .send_message(message, None, &())
                                 .await
                             {
                                 warn!("failed to send message: {}", err);
-                            }
-
-                            if let Err(err) = child[Privsep::CHILD_ID]
-                                .send_message(23u32.into(), None, &())
-                                .await {
-                                warn!("failed to send message to sibling: {}", err);
                             }
                         }
                         None => break Err(Error::Terminated(Privsep::Parent.as_static_str())),
@@ -234,7 +244,10 @@ mod hello {
                 message = child[Privsep::CHILD_ID].recv_message::<()>() => {
                     match message? {
                         Some((message, _, _)) => {
-                            info!("received message {:?}", message);
+                            info!(
+                                "received message {:?}", message;
+                                "source" => Privsep::Child.as_ref(),
+                            );
                             sleep(Duration::from_secs(1)).await;
                             if let Err(err) = child[Privsep::CHILD_ID]
                                 .send_message(message, None, &())
