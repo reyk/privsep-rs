@@ -11,7 +11,7 @@ use std::{
         net as std_net,
     },
 };
-use tokio::net as tokio_net;
+use tokio::{net as tokio_net, task::yield_now};
 
 pub use tokio_net::UnixStream;
 
@@ -44,9 +44,12 @@ impl UnixStreamExt for UnixStream {
             self.readable().await?;
 
             match recv_vectored_with_ancillary_from(self, bufs, ancillary) {
-                Ok((count, _)) => return Ok(count),
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                Err(err) => return Err(err),
+                Ok((count, _)) => break Ok(count),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    yield_now().await;
+                    continue;
+                }
+                Err(err) => break Err(err),
             }
         }
     }
@@ -60,9 +63,12 @@ impl UnixStreamExt for UnixStream {
             self.writable().await?;
 
             match send_vectored_with_ancillary_to(self, bufs, ancillary) {
-                Ok(count) => return Ok(count),
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                Err(err) => return Err(err),
+                Ok(count) => break Ok(count),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    yield_now().await;
+                    continue;
+                }
+                Err(err) => break Err(err),
             }
         }
     }
