@@ -110,7 +110,7 @@ impl ops::Deref for Peer {
         // happen as it violates the configured privsep channels.
         self.handler
             .as_ref()
-            .expect(&format!("unconfigured privsep channel: {}", self.name))
+            .unwrap_or_else(|| panic!("unconfigured privsep channel: {}", self.name))
     }
 }
 
